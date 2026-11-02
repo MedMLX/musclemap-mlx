@@ -7,18 +7,22 @@ make env
 make qa
 make test
 make build
-musclemap-mlx status
-musclemap-mlx inspect-assets --model-dir weights
+uv run --locked musclemap-mlx status
+uv run --locked musclemap-mlx inspect-assets --model-dir weights
 ```
 
 The CLI verifies publisher bytes and parses JSON only. It never deserializes a
-checkpoint. Tests exercise missing and incomplete assets and the CLI's honest
-implementation status; they neither download weights nor run inference.
+checkpoint. Tests exercise missing and incomplete assets, same-size corruption, original
+configuration labels and the CLI's honest implementation status; they neither download weights nor run inference.
 
-`.venv/bin/python -I ../standards/check_standard.py .` reads committed `dev`, not working
-files. An unborn `dev` cannot be checked with the default command. A staged tree
-can be inspected explicitly with `git write-tree` and `--branch` without making
-a commit; such a check validates only those staged files.
+Run the structural checker after committing authorized changes to `dev`:
+
+```sh
+.venv/bin/python -I ../standards/check_standard.py .
+```
+
+It reads committed `dev`, not working files. Keep changes scoped to the requested
+work; a successful structural check does not establish native inference.
 
 ## Reference fixtures
 
@@ -39,3 +43,5 @@ substitute zeros, placeholder outputs or a PyTorch inference fallback.
   `[256, 256, 1]`, slice inference, inverse transforms, argmax and label remap.
 - Checkpoint conversion, native model, runner, parity and central registration
   remain development work. No upstream inference dependencies are installed.
+
+Licensing and publisher terms are retained in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).

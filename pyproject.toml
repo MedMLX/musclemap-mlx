@@ -41,6 +41,8 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://medmlx.org"
+Repository = "https://github.com/MedMLX/musclemap-mlx"
+Issues = "https://github.com/MedMLX/musclemap-mlx/issues"
 Weights = "https://zenodo.org/records/21929873"
 Upstream = "https://github.com/MuscleMap/MuscleMap"
 MedMLX = "https://github.com/MedMLX/medmlx"
@@ -90,6 +92,3 @@ reportUnnecessaryTypeIgnoreComment = "error"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-config --strict-markers"
-markers = [
-
-]

@@ -1,4 +1,5 @@
 """MuscleMap native-port development intake; no inference implementation yet."""
+
 from importlib.metadata import version
 
 

@@ -6,14 +6,24 @@ Development intake for MuscleMap v1.4; no native inference exists yet.
 
 - Work on dev. Main is the last release; do not release this intake package.
 - Follow sibling standards/runtime-standard.md and templates/runtime.
-- Keep reference/ read-only and preserve upstream licensing and weight terms.
-- Never commit weights, medical images, patient data or generated outputs.
 - Keep original anatomical label IDs and upstream preprocessing semantics.
 - Network inference, when implemented, must run natively in MLX on Metal.
   CPU I/O and preprocessing are allowed; no PyTorch or CPU network fallback.
 - Do not advertise inference, conversion or MedMLX registration before they exist.
 - Keep interfaces typed; no typing.Any or type-ignore comments.
 - Tests never import scripts/. Scripts run by path.
+
+## Upstream code, weights and data
+
+- Keep reference/ read-only and preserve upstream licensing and weight terms.
+- Never commit weights, medical images, patient data or generated outputs.
+- Review overlapping changes and stage only your own requested work.
+
+## Docs and releases
+
+- `main` is the last release and only release work changes it.
+- README.md is the only user documentation; developer verification belongs in docs/development.md.
+- This file, Makefile, docs/development.md and reference/ are dev-only.
 
 ## Checks
 

@@ -13,6 +13,8 @@ inference, checkpoint conversion and numerical comparisons are not implemented.
 | Upstream model | Contrast-agnostic wholebody v1.4, 2D MONAI UNet |
 | Label configuration | 113 original anatomical labels plus background, 114 output channels |
 | Assets | 104,884,148-byte PyTorch checkpoint and original JSON, MIT |
+| Hardware | Intake uses CPU hashing; native MLX memory is unmeasured |
+| Python | 3.13 |
 | Current output | JSON verification/status only; no segmentation output |
 
 ## Use with MedMLX
@@ -25,9 +27,8 @@ has no inference runner. Installing it does not enable `medmlx run`.
 From a local checkout, with uv and Python 3.13:
 
 ```sh
-uv venv --python 3.13
+uv sync --locked
 source .venv/bin/activate
-uv pip install -e .
 ```
 
 ## Run
@@ -36,6 +37,13 @@ uv pip install -e .
 musclemap-mlx status
 musclemap-mlx inspect-assets --model-dir weights
 ```
+
+| Command or option | Meaning | Default |
+| :--- | :--- | :--- |
+| `status` | Report native implementation status | Required subcommand |
+| `inspect-assets` | Inspect the three publisher assets | Required subcommand |
+| `--model-dir` | Asset folder | Required for inspection |
+| `--version` | Print installed version | Off |
 
 The asset directory must contain `contrast_agnostic_wholebody_model.pth`,
 `contrast_agnostic_wholebody_model.json` and the publisher `LICENSE` from
@@ -49,7 +57,7 @@ IDs must be preserved rather than replaced by channel indices.
 
 ## License
 
-MIT. Upstream source terms are preserved in [UPSTREAM_LICENSE](UPSTREAM_LICENSE),
+MIT. Upstream source terms are preserved in [UPSTREAM_LICENSE](https://github.com/MedMLX/musclemap-mlx/blob/dev/UPSTREAM_LICENSE),
 with attribution and publisher asset terms in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Model assets remain under their
+[THIRD_PARTY_NOTICES.md](https://github.com/MedMLX/musclemap-mlx/blob/dev/THIRD_PARTY_NOTICES.md). Model assets remain under their
 publisher's MIT terms. Research software; no clinical performance is established.

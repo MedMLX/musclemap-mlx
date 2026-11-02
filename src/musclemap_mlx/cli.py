@@ -1,4 +1,5 @@
 """Local asset inspection CLI; no model execution or automatic downloads."""
+
 from __future__ import annotations
 
 import argparse

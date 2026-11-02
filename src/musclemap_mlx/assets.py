@@ -1,4 +1,5 @@
 """Inspect publisher assets without deserializing the checkpoint."""
+
 from __future__ import annotations
 
 import hashlib
