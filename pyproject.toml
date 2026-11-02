@@ -1,0 +1,95 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "musclemap-mlx"
+version = "0.1.0.dev0"
+description = "Inspect pinned MuscleMap v1.4 assets for native MLX development"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "MIT"
+license-files = ["LICENSE", "UPSTREAM_LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [
+  { name = "Joseph Sandoval" },
+  { name = "Alfredo Sandoval Jr." },
+]
+keywords = [
+  "mlx",
+  "apple-silicon",
+  "metal",
+  "medical-imaging",
+  "musclemap",
+  "segmentation",
+  "mri",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Private :: Do Not Upload",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Image Processing",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://medmlx.org"
+Weights = "https://zenodo.org/records/21929873"
+Upstream = "https://github.com/MuscleMap/MuscleMap"
+MedMLX = "https://github.com/MedMLX/medmlx"
+[project.scripts]
+"musclemap-mlx" = "musclemap_mlx.cli:main"
+[dependency-groups]
+dev = ["pyright==1.1.414", "pytest>=8.4,<10", "ruff>=0.13,<1"]
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+required-environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+constraint-dependencies = ["setuptools>=84.1.0", "filelock>=4.2.1"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/musclemap_mlx"]
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "src/musclemap_mlx",
+  "pyproject.toml",
+  "README.md",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "UPSTREAM_LICENSE",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["reference"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TID251", "TID252", "ANN401"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.Any" = { msg = "Use a precise type and parse untyped values at the boundary." }
+"typing_extensions.Any" = { msg = "Use a precise type and parse untyped values at the boundary." }
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["src"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+enableTypeIgnoreComments = false
+reportUnnecessaryTypeIgnoreComment = "error"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"
+markers = [
+
+]
