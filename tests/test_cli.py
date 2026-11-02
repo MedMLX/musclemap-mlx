@@ -1,68 +1,121 @@
-"""Boundary checks for the development-intake CLI."""
+"""Console-script contract for the download and segment subcommands."""
 
-import hashlib
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from musclemap_mlx import assets
-from musclemap_mlx.assets import ASSETS, inspect_assets
 from musclemap_mlx.cli import main
+from musclemap_mlx.geometry import nib as nifti_io
 
 
-def test_status_does_not_advertise_inference(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["status"]) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert result["native_inference"] == "unimplemented"
-    assert result["medmlx_registered"] is False
+def _image(path: Path) -> None:
+    nifti_io.save(
+        nifti_io.Nifti1Image(np.ones((8, 9, 2), dtype=np.float32), np.eye(4)),
+        str(path),
+    )
 
 
-def test_missing_assets_are_actionable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["inspect-assets", "--model-dir", str(tmp_path)]) == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "Zenodo record 21929873" in captured.err
+def test_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["--help"])
+    assert caught.value.code == 0
+    assert "segment" in capsys.readouterr().out
 
 
-def test_incomplete_checkpoint_is_rejected(tmp_path: Path) -> None:
-    name = next(iter(ASSETS))
-    (tmp_path / name).write_bytes(b"partial")
-    with pytest.raises(ValueError, match="Unexpected size"):
-        inspect_assets(tmp_path)
+def test_version_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["--version"])
+    assert caught.value.code == 0
+    assert capsys.readouterr().out.strip()
 
 
-def test_no_inference_command_is_advertised() -> None:
+def test_missing_segment_arguments_exit_two() -> None:
     with pytest.raises(SystemExit) as caught:
         main(["segment"])
     assert caught.value.code == 2
 
 
-@pytest.fixture
-def tiny_assets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Supply tiny publisher records while retaining real file IO and hashing."""
-    payloads = {
-        "task.pth": b"abc",
-        assets.CONFIG: b'{"labels": {"0": "background", "7": "muscle"}}',
-    }
-    records: dict[str, tuple[int, str]] = {}
-    for name, payload in payloads.items():
-        (tmp_path / name).write_bytes(payload)
-        records[name] = (len(payload), hashlib.md5(payload, usedforsecurity=False).hexdigest())
-    monkeypatch.setattr(assets, "ASSETS", records)
-    return tmp_path
+def test_unknown_status_command_is_not_advertised() -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["status"])
+    assert caught.value.code == 2
 
 
-def test_verified_assets_preserve_original_labels(tiny_assets: Path) -> None:
-    assert inspect_assets(tiny_assets) == {
-        "status": "assets-verified-native-inference-unimplemented",
-        "record": "https://zenodo.org/records/21929873",
-        "configuration": {"labels": {"0": "background", "7": "muscle"}},
-        "checkpoint_deserialized": False,
-    }
+def test_short_revision_is_a_usage_error(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["download", "--revision", "abc", "--model-dir", str(tmp_path)])
+    assert caught.value.code == 2
 
 
-def test_same_size_corrupt_asset_is_rejected(tiny_assets: Path) -> None:
-    (tiny_assets / "task.pth").write_bytes(b"xyz")
-    with pytest.raises(ValueError, match=r"Publisher MD5 mismatch for task\.pth"):
-        inspect_assets(tiny_assets)
+def test_segment_missing_input_reports_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(
+        [
+            "segment",
+            "--input",
+            str(tmp_path / "missing.nii.gz"),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "InvalidInputError" in captured.err
+    assert "does not exist" in captured.err
+
+
+def test_segment_without_weights_reports_asset_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    image = tmp_path / "image.nii.gz"
+    _image(image)
+    code = main(
+        [
+            "segment",
+            "--input",
+            str(image),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "AssetNotReadyError" in captured.err
+    assert "converted weights" in captured.err
+
+
+def test_download_rejects_unpinned_revision_before_network(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["download", "--revision", "0" * 39, "--model-dir", str(tmp_path)])
+    assert caught.value.code == 2
+
+
+def test_segment_result_is_json_when_stubbed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    image = tmp_path / "image.nii.gz"
+    _image(image)
+
+    def fake_run(**_kwargs: object) -> dict[str, object]:
+        return {"outputs": {"mask": "/tmp/mask.nii.gz"}, "details": {"requires_human_review": True}}
+
+    monkeypatch.setattr("musclemap_mlx.medmlx.run", fake_run)
+    code = main(
+        [
+            "segment",
+            "--input",
+            str(image),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert json.loads(captured.out)["details"]["requires_human_review"] is True

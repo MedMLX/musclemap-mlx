@@ -1,0 +1,640 @@
+"""NumPy port of the MuscleMap v1.4 MONAI 1.3.2 image geometry.
+
+The publisher's inference transforms are ``LoadImaged`` -> ``EnsureChannelFirstd``
+-> ``Orientationd("RAS")`` -> ``Spacingd([1, 1, -1], bilinear)`` ->
+``NormalizeIntensityd(nonzero=True)`` -> ``CropForegroundd(margin=20)`` ->
+``SpatialPadd((256, 256, 1), method="end")``. ``Invertd`` reverses the spatial
+transforms on the logits with the same bilinear mode before ``argmax``.
+
+Only I/O and host geometry run here. The network is native MLX in ``network.py``.
+Resampling uses ``scipy.ndimage.affine_transform`` in float64 with border clamping,
+which matches MONAI's ``grid_sample(align_corners=False, padding_mode="border",
+mode="bilinear")`` pull mapping.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol, cast
+
+import nibabel as nib_runtime
+import numpy as np
+import numpy.typing as npt
+from medmlx_core.geometry import (
+    _linspace_from_neg_one,
+    _mm,
+    affine_to_spacing,
+    compute_shape_offset,
+    zoom_affine,
+)
+from scipy import ndimage as scipy_ndimage
+
+from musclemap_mlx.config import (
+    CROP_MARGIN,
+    PAD_SIZE,
+    ModelSpec,
+)
+
+type Float32Array = npt.NDArray[np.float32]
+type Float64Array = npt.NDArray[np.float64]
+type Int16Array = npt.NDArray[np.int16]
+type Int64Array = npt.NDArray[np.int64]
+type Shape3 = tuple[int, int, int]
+
+
+class NiftiHeader(Protocol):
+    """The header operations used by the reader and writer."""
+
+    def get(self, key: str) -> object: ...
+
+    def get_zooms(self) -> tuple[float, ...]: ...
+
+    def set_zooms(self, zooms: tuple[float, ...]) -> None: ...
+
+    def get_xyzt_units(self) -> tuple[str, str]: ...
+
+    def copy(self) -> NiftiHeader: ...
+
+    def get_qform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
+
+    def get_sform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
+
+
+class NiftiImage(Protocol):
+    """The NIfTI image surface used by the pipeline."""
+
+    affine: Float64Array
+    dataobj: object
+    header: NiftiHeader
+
+    def get_sform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
+
+    def get_qform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
+
+    def set_sform(self, affine: Float64Array, code: int = 0) -> None: ...
+
+    def set_qform(self, affine: Float64Array, code: int = 0) -> None: ...
+
+
+class Orientations(Protocol):
+    def aff2axcodes(self, affine: Float64Array) -> tuple[str, ...]: ...
+
+    def axcodes2ornt(self, axcodes: str) -> Float64Array: ...
+
+    def ornt_transform(self, start: Float64Array, end: Float64Array) -> Float64Array: ...
+
+    def inv_ornt_aff(self, ornt: Int64Array, shape: Shape3) -> Float64Array: ...
+
+    def io_orientation(self, affine: Float64Array) -> Float64Array: ...
+
+
+class NiftiIo(Protocol):
+    orientations: Orientations
+
+    def load(self, filename: str) -> NiftiImage: ...
+
+    def save(self, image: NiftiImage, filename: str) -> None: ...
+
+    def Nifti1Image(
+        self, data: npt.ArrayLike, affine: Float64Array, header: NiftiHeader | None = None
+    ) -> NiftiImage: ...
+
+
+class Ndimage(Protocol):
+    def affine_transform(
+        self,
+        input: Float64Array,
+        matrix: Float64Array,
+        offset: Float64Array,
+        output_shape: Shape3,
+        order: int,
+        mode: str,
+        prefilter: bool,
+    ) -> Float64Array: ...
+
+    def label(
+        self, input: npt.NDArray[np.bool_], structure: npt.NDArray[np.bool_]
+    ) -> tuple[Int64Array, int]: ...
+
+    def generate_binary_structure(self, rank: int, connectivity: int) -> npt.NDArray[np.bool_]: ...
+
+
+nib = cast(NiftiIo, nib_runtime)
+ndimage = cast(Ndimage, scipy_ndimage)
+
+SPATIAL_AXCODES = "RAS"
+AFFINE_TOL = 1e-3
+_ACCEPTED_UNITS = {"mm", "unknown"}
+
+
+@dataclass(frozen=True, slots=True)
+class VolumeGeometry:
+    """Every grid needed to invert the preprocessing back to the reader grid."""
+
+    original_shape: Shape3
+    original_affine: Float64Array
+    oriented_shape: Shape3
+    oriented_affine: Float64Array
+    spaced_shape: Shape3
+    spaced_affine: Float64Array
+    crop_start: Shape3
+    crop_shape: Shape3
+    padded_shape: Shape3
+    orientation_to_ras: Int64Array
+
+
+@dataclass(frozen=True, slots=True)
+class ReadVolume:
+    """A reader grid for preprocessing and the original grid for output."""
+
+    image: NiftiImage
+    data: Float32Array
+    affine: Float64Array
+    output_affine: Float64Array
+    output_header: NiftiHeader
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedVolume:
+    """The padded network input and the geometry that produced it."""
+
+    data: Float32Array
+    geometry: VolumeGeometry
+
+
+def read_nifti(path: Path) -> ReadVolume:
+    """Read a 3D NIfTI as float32 on its reader grid.
+
+    The header correction and affine selection follow MONAI's nibabel reader: when
+    the header zooms disagree with the affine, the compatible sform/qform is kept
+    or the zooms are reset to the affine spacing.
+
+    Raises:
+        ValueError: The file is not a 3D NIfTI, uses non-mm spatial units, contains
+            non-finite data, or has a non-finite or singular affine.
+    """
+    loaded = nib.load(str(path))
+    if not hasattr(loaded, "header") or not hasattr(loaded, "get_sform"):
+        raise ValueError(f"MuscleMap requires a NIfTI image, got {type(loaded).__name__}")
+    image = loaded
+    units = image.header.get_xyzt_units()[0]
+    if units not in _ACCEPTED_UNITS:
+        raise ValueError(f"MuscleMap expects millimetre spatial units, got {units!r}")
+    output_affine = np.array(image.affine, dtype=np.float64, copy=True)
+    output_header = image.header.copy()
+    data = np.asanyarray(image.dataobj)
+    if data.ndim != 3:
+        raise ValueError(f"MuscleMap expects a 3D volume, got shape {data.shape}")
+    array = np.asarray(data, dtype=np.float32)
+    if not np.isfinite(array).all():
+        raise ValueError("MuscleMap input contains non-finite voxels")
+    _correct_nifti_header(image)
+    affine = np.array(image.affine, dtype=np.float64, copy=True)
+    if not np.isfinite(affine).all():
+        raise ValueError("MuscleMap input affine is not finite")
+    if abs(float(np.linalg.det(affine[:3, :3]))) < 1e-8:
+        raise ValueError("MuscleMap input affine is singular")
+    return ReadVolume(
+        image=image,
+        data=np.ascontiguousarray(array),
+        affine=affine,
+        output_affine=output_affine,
+        output_header=output_header,
+    )
+
+
+def preprocess(data: Float32Array, affine: Float64Array, spec: ModelSpec) -> PreparedVolume:
+    """Apply the publisher's orientation, spacing, normalization, crop and pad."""
+    if data.ndim != 3:
+        raise ValueError(f"Expected a 3D volume, got shape {data.shape}")
+    channel_first = np.ascontiguousarray(data[None], dtype=np.float32)
+    original_shape = _shape3(channel_first.shape[1:])
+
+    orientation = _orientation_transform(affine, SPATIAL_AXCODES)
+    oriented = _apply_orientation(channel_first, orientation)
+    oriented_shape = _shape3(oriented.shape[1:])
+    oriented_affine = affine @ nib.orientations.inv_ornt_aff(orientation, original_shape)
+
+    spaced_affine, spaced_shape = _spacing_geometry(
+        oriented_affine, oriented_shape, spec.pix_dim
+    )
+    spaced = _resample_monai(
+        oriented, np.linalg.solve(oriented_affine, spaced_affine), spaced_shape
+    )
+    normalized = _normalize_nonzero(spaced)
+    crop_start, crop_end = _foreground_box(normalized[0], CROP_MARGIN)
+    if any(end <= start for start, end in zip(crop_start, crop_end, strict=True)):
+        raise ValueError("MuscleMap found no positive foreground after normalization")
+    crop_shape = _shape3(
+        tuple(end - start for start, end in zip(crop_start, crop_end, strict=True))
+    )
+    cropped = np.ascontiguousarray(
+        normalized[
+            :,
+            crop_start[0] : crop_end[0],
+            crop_start[1] : crop_end[1],
+            crop_start[2] : crop_end[2],
+        ]
+    )
+    pad_width = [(0, 0)] + [
+        (0, max(PAD_SIZE[index] - cropped.shape[index + 1], 0)) for index in range(3)
+    ]
+    padded = np.pad(cropped, pad_width, mode="constant").astype(np.float32, copy=False)
+    geometry = VolumeGeometry(
+        original_shape=original_shape,
+        original_affine=affine,
+        oriented_shape=oriented_shape,
+        oriented_affine=oriented_affine,
+        spaced_shape=spaced_shape,
+        spaced_affine=spaced_affine,
+        crop_start=_shape3(crop_start),
+        crop_shape=crop_shape,
+        padded_shape=_shape3(padded.shape[1:]),
+        orientation_to_ras=orientation,
+    )
+    return PreparedVolume(data=np.ascontiguousarray(padded), geometry=geometry)
+
+
+def invert_logits(logits: Float32Array, geometry: VolumeGeometry) -> Float32Array:
+    """Reverse pad, crop, spacing and orientation on channel-first logits."""
+    if logits.ndim != 4:
+        raise ValueError(f"Expected channel-first logits, got shape {logits.shape}")
+    pad_shape = geometry.padded_shape
+    if tuple(logits.shape[1:]) != pad_shape:
+        raise ValueError(
+            f"Logits spatial shape {logits.shape[1:]} does not match the padded grid {pad_shape}"
+        )
+    cropped = logits[
+        :,
+        : geometry.crop_shape[0],
+        : geometry.crop_shape[1],
+        : geometry.crop_shape[2],
+    ]
+    spaced = np.zeros((logits.shape[0], *geometry.spaced_shape), dtype=np.float32)
+    start_h, start_w, start_d = geometry.crop_start
+    size_h, size_w, size_d = geometry.crop_shape
+    spaced[
+        :,
+        start_h : start_h + size_h,
+        start_w : start_w + size_w,
+        start_d : start_d + size_d,
+    ] = cropped
+    inverse_spacing = np.linalg.solve(geometry.spaced_affine, geometry.oriented_affine)
+    oriented = _resample(spaced, inverse_spacing, geometry.oriented_shape)
+    inverse_orientation = _orientation_transform(
+        geometry.oriented_affine, "".join(nib.orientations.aff2axcodes(geometry.original_affine))
+    )
+    original = _apply_orientation(oriented, inverse_orientation)
+    if tuple(original.shape[1:]) != geometry.original_shape:
+        raise RuntimeError("MuscleMap inverse geometry did not restore the reader grid")
+    return np.ascontiguousarray(original)
+
+
+def discretize(logits: Float32Array, spec: ModelSpec) -> Int16Array:
+    """Take MONAI's channel argmax and remap class indices to original label IDs."""
+    class_indices = np.argmax(logits, axis=0).astype(np.int16, copy=False)
+    mapping = np.asarray(spec.class_labels, dtype=np.int16)
+    return np.ascontiguousarray(mapping[class_indices])
+
+
+def keep_largest_components(labels: Int16Array) -> Int16Array:
+    """Keep the largest 6-connected component for every nonzero label.
+
+    This mirrors ``mm_util.connected_chunks(..., connectivity=1)``. It is host
+    numerical postprocessing, not network math.
+    """
+    if labels.ndim != 3:
+        raise ValueError(f"Expected a 3D label map, got shape {labels.shape}")
+    result = np.array(labels, dtype=np.int16, copy=True)
+    structure = ndimage.generate_binary_structure(3, 1)
+    for label in np.unique(result):
+        if int(label) == 0:
+            continue
+        mask = result == label
+        if not bool(mask.any()):
+            continue
+        components, count = ndimage.label(mask, structure=structure)
+        if int(count) <= 1:
+            continue
+        sizes = np.bincount(components.ravel())
+        keep = int(np.argmax(sizes[1:])) + 1
+        result[mask & (components != keep)] = 0
+    return np.ascontiguousarray(result)
+
+
+def write_mask(
+    path: Path,
+    labels: Int16Array,
+    affine: Float64Array,
+    header: NiftiHeader,
+) -> None:
+    """Write the label map with the input affine and qform/sform codes."""
+    image = nib.Nifti1Image(labels.astype(np.int16, copy=False), affine, header.copy())
+    _, qcode = header.get_qform(coded=True)
+    _, scode = header.get_sform(coded=True)
+    image.set_qform(affine, int(qcode or 0))
+    image.set_sform(affine, int(scode or 0))
+    nib.save(image, str(path))
+
+
+def publish_mask(
+    path: Path,
+    labels: Int16Array,
+    affine: Float64Array,
+    header: NiftiHeader,
+) -> None:
+    """Write atomically through a same-directory temporary file."""
+    temporary = path.with_name(f".{os.getpid()}.{path.name}")
+    try:
+        write_mask(temporary, labels, affine, header)
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def axis_codes(affine: Float64Array) -> str:
+    """Return the three-axis orientation code (for example ``RAS``)."""
+    return "".join(nib.orientations.aff2axcodes(affine))
+
+
+def _shape3(shape: tuple[int, ...]) -> Shape3:
+    if len(shape) != 3:
+        raise ValueError(f"Expected three spatial dimensions, got {shape}")
+    return (int(shape[0]), int(shape[1]), int(shape[2]))
+
+
+def _orientation_transform(affine: Float64Array, axcodes: str) -> Int64Array:
+    source = nib.orientations.io_orientation(affine)
+    target = nib.orientations.axcodes2ornt(axcodes)
+    return np.asarray(nib.orientations.ornt_transform(source, target), dtype=np.int64)
+
+
+def _apply_orientation(data: Float32Array, orientation: Int64Array) -> Float32Array:
+    # MONAI flips on the source axes, then permutes with the channel axis fixed.
+    transform = np.array(orientation, dtype=np.int64, copy=True)
+    transform[:, 0] += 1
+    full = np.concatenate((np.asarray([[0, 1]], dtype=np.int64), transform))
+    axes = [axis for axis, flip in enumerate(full[:, 1]) if int(flip) == -1]
+    output = np.flip(data, axis=tuple(axes)) if axes else data
+    return np.ascontiguousarray(np.transpose(output, np.argsort(full[:, 0])))
+
+
+def _spacing_geometry(
+    affine: Float64Array, shape: Shape3, pix_dim: tuple[float, float, float]
+) -> tuple[Float64Array, Shape3]:
+    original_spacing = affine_to_spacing(affine, 3)
+    target = np.asarray(pix_dim, dtype=np.float64)
+    for index, original in enumerate(original_spacing):
+        if target[index] <= 0 or abs(float(original) - float(target[index])) <= AFFINE_TOL:
+            target[index] = original
+    new_affine = zoom_affine(affine, target)
+    output_shape, offset = compute_shape_offset(shape, affine, new_affine)
+    new_affine[:3, -1] = offset[:3]
+    return new_affine, _shape3(tuple(int(value) for value in output_shape))
+
+
+_FMA_SPLIT = 134217729.0
+
+
+def _two_sum(left: Float64Array, right: Float64Array) -> tuple[Float64Array, Float64Array]:
+    total = left + right
+    shifted = total - left
+    return total, (left - (total - shifted)) + (right - shifted)
+
+
+def _two_product(left: Float64Array, right: Float64Array) -> tuple[Float64Array, Float64Array]:
+    product = left * right
+    scaled_left = _FMA_SPLIT * left
+    high_left = scaled_left - (scaled_left - left)
+    low_left = left - high_left
+    scaled_right = _FMA_SPLIT * right
+    high_right = scaled_right - (scaled_right - right)
+    low_right = right - high_right
+    error = (
+        ((high_left * high_right - product) + high_left * low_right)
+        + low_left * high_right
+    ) + low_left * low_right
+    return product, error
+
+
+def _fma(
+    left: Float64Array | np.float64,
+    right: Float64Array | np.float64,
+    addend: Float64Array | np.float64,
+) -> Float64Array:
+    """Correctly rounded float64 ``left * right + addend`` (Veltkamp/Dekker)."""
+    left_array, right_array, addend_array = np.broadcast_arrays(
+        np.asarray(left, dtype=np.float64),
+        np.asarray(right, dtype=np.float64),
+        np.asarray(addend, dtype=np.float64),
+    )
+    product, product_error = _two_product(left_array, right_array)
+    total, total_error = _two_sum(addend_array, product)
+    tail, tail_error = _two_sum(total_error, product_error)
+    even = (tail.view(np.int64) & 1) == 0
+    toward = np.where(tail_error > 0, np.inf, -np.inf)
+    tail = np.where((tail_error != 0) & even, np.nextafter(tail, toward), tail)
+    return total + tail
+
+
+def _normalize_transform(shape: Shape3) -> Float64Array:
+    values = np.asarray(shape, dtype=np.float64)
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = np.diag(2.0 / values)
+    transform[:3, 3] = 1.0 / values - 1.0
+    return transform
+
+
+def _grid_theta(
+    transform: Float64Array, source_shape: Shape3, output_shape: Shape3
+) -> Float64Array:
+    source = _normalize_transform(source_shape)
+    destination = _normalize_transform(output_shape)
+    theta = _mm(_mm(source, transform), np.linalg.inv(destination))
+    reverse = [2, 1, 0]
+    theta = theta.copy()
+    theta[:3, :3] = theta[:3, :3][np.ix_(reverse, reverse)]
+    theta[:3, 3] = theta[:3, 3][reverse]
+    return theta
+
+
+def _resample_monai(
+    data: Float32Array, transform: Float64Array, output_shape: Shape3
+) -> Float32Array:
+    """MONAI 1.3.2 ``SpatialResample`` bilinear border sampling.
+
+    This reproduces ATen's 3D CPU ``grid_sample`` arithmetic, including the
+    fused multiply-add in source-coordinate unnormalization. The exact zero
+    pattern matters because ``NormalizeIntensityd(nonzero=True)`` uses
+    ``input != 0``: a different resampler can silently change normalization
+    statistics on oblique geometry.
+    """
+    if data.ndim != 4:
+        raise ValueError(f"Expected channel-first data, got shape {data.shape}")
+    spatial = data[0]
+    source_shape = _shape3(tuple(spatial.shape))
+    depth, height, width = source_shape
+    out_depth, out_height, out_width = output_shape
+    theta = _grid_theta(transform, source_shape, output_shape)
+    x_coords = _linspace_from_neg_one(out_width)
+    y_coords = _linspace_from_neg_one(out_height)
+    z_coords = _linspace_from_neg_one(out_depth)
+    base = np.empty((out_depth, out_height, out_width, 4), dtype=np.float64)
+    base[..., 0] = x_coords
+    base[..., 1] = y_coords[None, :, None]
+    base[..., 2] = z_coords[:, None, None]
+    base[..., 3] = 1.0
+    grid = (base.reshape(-1, 4) @ theta[:3, :].T).reshape(
+        out_depth, out_height, out_width, 3
+    )
+    ix = _fma(grid[..., 0] + 1.0, np.float64(width), np.float64(-1.0)) / 2.0
+    iy = _fma(grid[..., 1] + 1.0, np.float64(height), np.float64(-1.0)) / 2.0
+    iz = _fma(grid[..., 2] + 1.0, np.float64(depth), np.float64(-1.0)) / 2.0
+    ix = np.clip(ix, 0, width - 1)
+    iy = np.clip(iy, 0, height - 1)
+    iz = np.clip(iz, 0, depth - 1)
+    x0 = np.floor(ix).astype(np.int64)
+    y0 = np.floor(iy).astype(np.int64)
+    z0 = np.floor(iz).astype(np.int64)
+    x1, y1, z1 = x0 + 1, y0 + 1, z0 + 1
+    tnw = (x1 - ix) * (y1 - iy) * (z1 - iz)
+    tne = (ix - x0) * (y1 - iy) * (z1 - iz)
+    tsw = (x1 - ix) * (iy - y0) * (z1 - iz)
+    tse = (ix - x0) * (iy - y0) * (z1 - iz)
+    bnw = (x1 - ix) * (y1 - iy) * (iz - z0)
+    bne = (ix - x0) * (y1 - iy) * (iz - z0)
+    bsw = (x1 - ix) * (iy - y0) * (iz - z0)
+    bse = (ix - x0) * (iy - y0) * (iz - z0)
+    corners = (
+        (z0, y0, x0, tnw),
+        (z0, y0, x1, tne),
+        (z0, y1, x0, tsw),
+        (z0, y1, x1, tse),
+        (z1, y0, x0, bnw),
+        (z1, y0, x1, bne),
+        (z1, y1, x0, bsw),
+        (z1, y1, x1, bse),
+    )
+    output = np.empty((data.shape[0], *output_shape), dtype=np.float32)
+    for channel in range(data.shape[0]):
+        channel_data = np.asarray(data[channel], dtype=np.float64)
+        flattened = channel_data.reshape(-1)
+        result = np.zeros((out_depth, out_height, out_width), dtype=np.float64)
+        for zz, yy, xx, weight in corners:
+            valid = (
+                (zz >= 0)
+                & (zz < depth)
+                & (yy >= 0)
+                & (yy < height)
+                & (xx >= 0)
+                & (xx < width)
+            )
+            index = (
+                zz.clip(0, depth - 1) * height * width
+                + yy.clip(0, height - 1) * width
+                + xx.clip(0, width - 1)
+            )
+            values = flattened[index] * valid
+            result = _fma(values, weight, result)
+        output[channel] = result.astype(np.float32, copy=False)
+    return output
+
+
+def _resample(
+    data: Float32Array, transform: Float64Array, output_shape: Shape3
+) -> Float32Array:
+    """Resample each channel with scipy's bilinear border sampler."""
+    if data.ndim != 4:
+        raise ValueError(f"Expected channel-first data, got shape {data.shape}")
+    matrix = np.asarray(transform[:3, :3], dtype=np.float64)
+    offset = np.asarray(transform[:3, 3], dtype=np.float64)
+    output = np.empty((data.shape[0], *output_shape), dtype=np.float32)
+    for channel in range(data.shape[0]):
+        sampled = ndimage.affine_transform(
+            data[channel].astype(np.float64, copy=False),
+            matrix=matrix,
+            offset=offset,
+            output_shape=output_shape,
+            order=1,
+            mode="nearest",
+            prefilter=False,
+        )
+        output[channel] = sampled.astype(np.float32, copy=False)
+    return output
+
+def _normalize_nonzero(data: Float32Array) -> Float32Array:
+    output = np.array(data, dtype=np.float32, copy=True)
+    mask = output != 0
+    if not bool(mask.any()):
+        return output
+    values = output[mask]
+    mean = np.float32(values.mean(dtype=np.float32))
+    deviation = np.float32(values.std(dtype=np.float32, ddof=0))
+    if deviation == 0:
+        deviation = np.float32(1.0)
+    output[mask] = (values - mean) / deviation
+    return output
+
+
+def _foreground_box(volume: Float32Array, margin: int) -> tuple[Shape3, Shape3]:
+    mask = volume > 0
+    if not bool(mask.any()):
+        return (0, 0, 0), (0, 0, 0)
+    starts: list[int] = []
+    ends: list[int] = []
+    for axis in range(3):
+        other = tuple(index for index in range(3) if index != axis)
+        present = np.flatnonzero(np.any(mask, axis=other))
+        if present.size == 0:
+            return (0, 0, 0), (0, 0, 0)
+        starts.append(max(int(present[0]) - margin, 0))
+        ends.append(min(int(present[-1]) + margin + 1, mask.shape[axis]))
+    return _shape3(tuple(starts)), _shape3(tuple(ends))
+
+
+def _correct_nifti_header(image: NiftiImage) -> None:
+    dim = image.header.get("dim")
+    if isinstance(dim, np.ndarray):
+        values = cast(list[object], dim.tolist())
+    elif isinstance(dim, (list, tuple)):
+        values = list(cast(list[object] | tuple[object, ...], dim))
+    else:
+        return
+    if not values:
+        return
+    first = values[0]
+    if isinstance(first, bool) or not isinstance(first, (int, np.integer)):
+        return
+    dimension = cast(int, first)
+    if dimension >= 5:
+        return
+    pixdim = np.asarray(image.header.get_zooms())[:3]
+    if pixdim.size != 3:
+        return
+    norm_affine = affine_to_spacing(np.asarray(image.affine, dtype=np.float64), 3)
+    if np.allclose(pixdim, norm_affine):
+        return
+    sform, scode = image.get_sform(coded=True)
+    qform, qcode = image.get_qform(coded=True)
+    if sform is None or qform is None:
+        return
+    norm_sform = affine_to_spacing(np.asarray(sform, dtype=np.float64), 3)
+    norm_qform = affine_to_spacing(np.asarray(qform, dtype=np.float64), 3)
+    sform_mismatch = not np.allclose(norm_sform, pixdim)
+    qform_mismatch = not np.allclose(norm_qform, pixdim)
+    if int(scode or 0) != 0:
+        if not sform_mismatch:
+            return
+        if not qform_mismatch:
+            image.set_sform(qform, int(qcode or 0))
+            return
+    if int(qcode or 0) != 0:
+        if not qform_mismatch:
+            return
+        if not sform_mismatch:
+            image.set_qform(sform, int(scode or 0))
+            return
+    image.header.set_zooms(tuple(float(value) for value in norm_affine))

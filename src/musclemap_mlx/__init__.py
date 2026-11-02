@@ -1,4 +1,6 @@
-"""MuscleMap native-port development intake; no inference implementation yet."""
+"""MuscleMap v1.4 whole-body segmentation with native MLX on Apple Silicon."""
+
+from __future__ import annotations
 
 from importlib.metadata import version
 
