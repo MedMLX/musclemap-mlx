@@ -69,11 +69,8 @@ path, label table, MLX device, peak MLX memory, chunking facts and duration.
 
 ### Convert the publisher checkpoint
 
-The development tree contains the maintainer conversion tool. It verifies the
-publisher MD5 and SHA-256 values, loads the state dictionary with
-`weights_only=True`, checks all 46 tensor names, shapes, dtypes and finite
-values, writes deterministic safetensors, reloads it, and records the source
-and output hashes. The runtime never imports PyTorch.
+Use the checkout's conversion tool to check the publisher files and convert
+all 46 tensors to safetensors. Conversion needs PyTorch; inference uses MLX.
 
 The converted folder is not redistributed from this repository. A wheel install
 does not include the conversion tool, so use a development checkout until
@@ -127,8 +124,7 @@ keeps the input shape, affine and qform/sform codes.
 `mask.nii.gz` is int16 with background 0 and the original anatomical IDs from
 the publisher configuration, for example 1101 for the left levator scapulae
 and 8222 for the right plantaris. The largest 6-connected component of each
-label is kept, matching the upstream postprocessing. The runner never
-interprets the segmentation; review it before any scientific or clinical use.
+label is kept, matching the upstream postprocessing.
 
 ## License
 
@@ -136,5 +132,4 @@ MIT. Upstream source terms are preserved in
 [UPSTREAM_LICENSE](https://github.com/MedMLX/musclemap-mlx/blob/dev/UPSTREAM_LICENSE),
 with attribution and publisher asset terms in
 [THIRD_PARTY_NOTICES.md](https://github.com/MedMLX/musclemap-mlx/blob/dev/THIRD_PARTY_NOTICES.md).
-Model assets remain under their publisher's MIT terms. Research software; no
-clinical performance is established.
+Model assets retain the publisher's MIT terms.

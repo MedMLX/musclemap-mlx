@@ -1,6 +1,6 @@
 # musclemap-mlx development
 
-Maintainer notes for the `dev` branch. Users need only the [README](../README.md).
+Build, check and compare the runtime. For usage, see the [README](../README.md).
 
 ## Checks
 
@@ -35,8 +35,7 @@ whole-volume pipeline, the same volume with two-slice chunking, and a larger
 320x220x2 volume that exercises multiple sliding windows. Pipeline labels are
 compared exactly; the 64x64 test checks output shape, dtype and finiteness. The
 separate Perfkit parity receipt compares the 64x64 logits with the
-source-derived float32 contract `atol=5e-4, rtol=1e-5`. No tolerance is relaxed
-to obtain a pass.
+source-derived float32 contract `atol=5e-4, rtol=1e-5`.
 
 `make oracle` runs the CPU-only recorded checks: the final preprocessed array and
 affine, the inverse geometry on synthetic padded logits, and the argmax/remap
@@ -126,7 +125,7 @@ Architecture and inference contract:
   `chunk_size=None` uses eight slices in this port; an explicit value at least
   the volume depth runs one pass.
 
-Kept on purpose:
+### Preprocessing details
 
 - `pix_dim` component `-1` means "keep the source slice spacing" through
   MONAI's `fall_back_tuple`, not a negative-direction flip.
@@ -144,7 +143,7 @@ Kept on purpose:
   other than millimetres or unknown are rejected; the publisher pipeline assumes
   millimetres.
 
-Dispatch and execution:
+### Execution
 
 - Every network stage runs in the MLX Metal graph. Preprocessing, NIfTI IO,
   Gaussian window blending, inverse resampling and largest-component filtering
