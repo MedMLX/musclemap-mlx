@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol, cast
 
 import nibabel as nib_runtime
@@ -345,14 +346,12 @@ def publish_mask(
     affine: Float64Array,
     header: NiftiHeader,
 ) -> None:
-    """Write atomically through a same-directory temporary file."""
-    temporary = path.with_name(f".{os.getpid()}.{path.name}")
-    try:
+    """Write atomically from a private staging directory beside the destination."""
+    # NiBabel follows links when opening a file, so stage in a private directory.
+    with TemporaryDirectory(prefix=".musclemap-", dir=path.parent) as staging:
+        temporary = Path(staging) / path.name
         write_mask(temporary, labels, affine, header)
         os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 def axis_codes(affine: Float64Array) -> str:
