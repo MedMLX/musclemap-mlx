@@ -21,15 +21,14 @@ and PyTorch 2.4.1 are used only in the development reference environment; the
 converter uses PyTorch's restricted `weights_only=True` deserializer and the
 runtime never imports Torch.
 
-Zenodo record [21929873](https://zenodo.org/records/21929873) supplies
-`contrast_agnostic_wholebody_model.pth` (104,884,148 bytes, MD5
-`910b722aeb641c380404c99ec6d1af97`, SHA-256
-`45dfa2843d2e0b1fd842152d6a79bfd4bcb90899c076ceb6346c59da9a79a16c`), its
-original JSON configuration and the publisher `LICENSE`, under the publisher's
-MIT terms. The license text is identical to [UPSTREAM_LICENSE](UPSTREAM_LICENSE).
-These assets remain unchanged in ignored local storage and are excluded from
-distributions. No weights are retrained. Converted safetensors are local
-artifacts and are not hosted by this repository yet.
+Zenodo record [21929873](https://zenodo.org/records/21929873) supplies the
+contrast-agnostic wholebody v1.4 checkpoint, original JSON configuration and
+publisher `LICENSE` under MIT. The license grant matches
+[UPSTREAM_LICENSE](UPSTREAM_LICENSE). Converted weights retain all original
+float32 parameters and are hosted at
+[MedMLX/musclemap-mlx](https://huggingface.co/MedMLX/musclemap-mlx/tree/a798b3073e3b2c449987c13aa193626aaacc3092),
+with configuration, labels, license and attribution. No weights or medical images
+are included in package distributions.
 
 ## Showcase image
 

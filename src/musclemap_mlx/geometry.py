@@ -56,6 +56,10 @@ class NiftiHeader(Protocol):
 
     def get_xyzt_units(self) -> tuple[str, str]: ...
 
+    def set_xyzt_units(self, xyz: str, t: str) -> None: ...
+
+    def set_data_dtype(self, datatype: object) -> None: ...
+
     def copy(self) -> NiftiHeader: ...
 
     def get_qform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
@@ -258,6 +262,22 @@ def preprocess(data: Float32Array, affine: Float64Array, spec: ModelSpec) -> Pre
     return PreparedVolume(data=np.ascontiguousarray(padded), geometry=geometry)
 
 
+def read_chunk(volume: ReadVolume, start: int, end: int) -> ReadVolume:
+    """Read a chunk after upstream's source-header NIfTI serialization.
+
+    ``mm_util._write_temp_chunk`` writes float32 pixels with the original storage
+    dtype. NiBabel consequently rescales integer images, including their zeros.
+    This round trip must precede nonzero normalization to match that contract.
+    """
+    with TemporaryDirectory(prefix="musclemap-chunk-") as temporary:
+        path = Path(temporary) / "chunk.nii"
+        image = nib.Nifti1Image(
+            volume.data[..., start:end], volume.output_affine, volume.output_header.copy()
+        )
+        nib.save(image, str(path))
+        return read_nifti(path)
+
+
 def invert_logits(logits: Float32Array, geometry: VolumeGeometry) -> Float32Array:
     """Reverse pad, crop, spacing and orientation on channel-first logits."""
     if logits.ndim != 4:
@@ -331,12 +351,15 @@ def write_mask(
     affine: Float64Array,
     header: NiftiHeader,
 ) -> None:
-    """Write the label map with the input affine and qform/sform codes."""
-    image = nib.Nifti1Image(labels.astype(np.int16, copy=False), affine, header.copy())
-    _, qcode = header.get_qform(coded=True)
-    _, scode = header.get_sform(coded=True)
-    image.set_qform(affine, int(qcode or 0))
-    image.set_sform(affine, int(scode or 0))
+    """Write int16 anatomical IDs with the input units and both spatial forms."""
+    output_header = header.copy()
+    # NIfTI constructors retain the header dtype even when the array is int16.
+    output_header.set_data_dtype(np.int16)
+    image = nib.Nifti1Image(labels.astype(np.int16, copy=False), affine, output_header)
+    qform, qcode = header.get_qform(coded=True)
+    sform, scode = header.get_sform(coded=True)
+    image.set_qform(affine if qform is None else qform, int(qcode or 0))
+    image.set_sform(affine if sform is None else sform, int(scode or 0))
     nib.save(image, str(path))
 
 

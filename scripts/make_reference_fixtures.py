@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import nibabel as nib
 import numpy as np
@@ -40,7 +42,7 @@ from monai.transforms import (
 )
 from scipy import ndimage as ndi
 
-from musclemap_mlx.assets import SHA256, verify_assets
+from musclemap_mlx.assets import verify_assets
 from musclemap_mlx.config import CONFIG_NAME, load_model_config
 
 SCHEMA_VERSION = 1
@@ -122,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--image", type=Path, help="Record a real NIfTI instead of synthetic cases")
+    parser.add_argument("--chunk-size", type=int, default=8)
     args = parser.parse_args(argv)
     assets = args.assets.expanduser().absolute()
     output = args.output.expanduser().absolute()
@@ -139,6 +143,10 @@ def main(argv: list[str] | None = None) -> int:
     network = _network(config_path)
     network.load_state_dict(state)
     network.eval()
+
+    if args.image is not None:
+        _record_real(args.image, network, config_path, output, args.chunk_size)
+        return 0
 
     small_image = _phantom(SMALL_SHAPE, (50, 45, 2), (13, 10, 2), seed=7)
     small_path = output / "small_input.nii.gz"
@@ -242,8 +250,6 @@ def main(argv: list[str] | None = None) -> int:
             "repository": "https://github.com/MuscleMap/MuscleMap",
             "revision": "35a2138a4a3a63be713bae5584632ffc6433b960",
             "zenodo_record": "https://zenodo.org/records/21929873",
-            "checkpoint_sha256": SHA256["contrast_agnostic_wholebody_model.pth"],
-            "config_sha256": SHA256[CONFIG_NAME],
         },
         "versions": {
             "torch": torch.__version__,
@@ -267,6 +273,58 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(json.dumps(metadata, indent=2, sort_keys=True))
     return 0
+
+
+def _record_real(
+    path: Path, network: UNet, config: Path, output: Path, chunk_size: int
+) -> None:
+    """Record upstream float32 chunk logits and the assembled anatomical mask.
+
+    Chunk NIfTI construction follows upstream ``_write_temp_chunk``. Component
+    filtering runs once after assembly, never independently on each chunk.
+    """
+    if chunk_size < 1:
+        raise ValueError("chunk-size must be positive")
+    started = time.perf_counter()
+    image = nib.load(str(path))
+    data = np.asarray(image.dataobj, dtype=np.float32)
+    if data.ndim != 3:
+        raise ValueError("A real reference input must be three-dimensional")
+    full = np.zeros(data.shape, dtype=np.int16)
+    with TemporaryDirectory(prefix="chunks-", dir=output) as temporary:
+        for start in range(0, data.shape[2], chunk_size):
+            end = min(start + chunk_size, data.shape[2])
+            chunk = data[..., start:end]
+            chunk_path = Path(temporary) / "input.nii"
+            nib.save(nib.Nifti1Image(chunk, image.affine, image.header.copy()), str(chunk_path))
+            transforms, stages, final = _run_stages(chunk_path, config)
+            inverted, labels = _run_pipeline(
+                transforms, final, network, config, filter_connected=False
+            )
+            full[..., start:end] = labels
+            prepared = final["image"]
+            window = prepared[None, :, :256, :256, :1].squeeze(-1)
+            with torch.inference_mode():
+                network_logits = network(window).detach().cpu().numpy()
+            np.savez_compressed(
+                output / f"chunk-{start}.npz", input=np.asarray(stages["loaded_data"]),
+                affine=np.asarray(stages["loaded_affine"]),
+                prepared=np.asarray(prepared), network_input=np.asarray(window),
+                network_logits=network_logits, inverted_logits=inverted,
+            )
+            print(f"Recorded slices {start}:{end}", flush=True)
+    np.save(output / "labels.npy", connected_chunks(full))
+    metadata = {
+        "upstream_revision": "35a2138a4a3a63be713bae5584632ffc6433b960",
+        "checkpoint_record": "https://zenodo.org/records/21929873",
+        "input_name": path.name, "shape": list(data.shape),
+        "affine": image.affine.tolist(), "units": image.header.get_xyzt_units(),
+        "chunk_size": chunk_size, "overlap": 0.9, "dtype": "float32",
+        "torch": torch.__version__, "monai": _module_version("monai"),
+        "numpy": np.__version__, "nibabel": nib.__version__, "scipy": scipy.__version__,
+        "duration_seconds": time.perf_counter() - started,
+    }
+    (output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
 
 def _network(config_path: Path) -> UNet:

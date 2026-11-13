@@ -1,4 +1,4 @@
-"""Convert the verified MuscleMap v1.4 checkpoint to deterministic safetensors.
+"""Convert the MuscleMap v1.4 checkpoint with the standard safetensors writer.
 
 Run with the project environment:
 
@@ -9,26 +9,25 @@ Run with the project environment:
 
 Torch is used only to deserialize the publisher state dictionary with
 ``weights_only=True`` and to copy tensors to NumPy. No Torch graph or model is
-constructed here, and the runtime never imports Torch. The script verifies the
-publisher bytes, the exact 46-tensor inventory and shapes, writes safetensors in
-sorted name order, reloads it, and records the source and output hashes.
+constructed here, and the runtime never imports Torch. The script checks asset
+completeness, the exact 46-tensor inventory, shapes,
+dtypes and finiteness, then reloads safetensors and compares every tensor exactly.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import shutil
-import struct
+from importlib.metadata import version
 from pathlib import Path
 from typing import cast
 
 import numpy as np
 import torch
-from safetensors.numpy import load_file
+from safetensors.numpy import load_file, save_file
 
-from musclemap_mlx.assets import SHA256, verify_assets
+from musclemap_mlx.assets import verify_assets
 from musclemap_mlx.config import (
     CONFIG_NAME,
     UPSTREAM_REVISION,
@@ -36,7 +35,7 @@ from musclemap_mlx.config import (
     load_model_config,
 )
 
-CONVERTER = "musclemap-mlx 0.1.0.dev0"
+CONVERTER = f"musclemap-mlx {version("musclemap-mlx")}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,12 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     metadata = {
         "format": "pt",
         "source": checkpoint.name,
-        "source_sha256": SHA256[checkpoint.name],
-        "config_sha256": SHA256[CONFIG_NAME],
         "upstream_revision": UPSTREAM_REVISION,
         "converter": CONVERTER,
     }
-    _write_safetensors(output, arrays, metadata)
+    save_file(arrays, output, metadata=metadata)
     reloaded = load_file(output)
     if set(reloaded) != set(arrays):
         raise ValueError("written safetensors inventory differs from the source")
@@ -85,11 +82,9 @@ def main(argv: list[str] | None = None) -> int:
         "source": {
             "name": checkpoint.name,
             "bytes": checkpoint.stat().st_size,
-            "sha256": SHA256[checkpoint.name],
         },
         "config": {
             "name": config.name,
-            "sha256": SHA256[CONFIG_NAME],
         },
         "converter": CONVERTER,
         "tensors": [
@@ -99,7 +94,6 @@ def main(argv: list[str] | None = None) -> int:
         "output": {
             "name": output.name,
             "bytes": output.stat().st_size,
-            "sha256": _sha256(output),
         },
     }
     (output.parent / "conversion.json").write_text(
@@ -107,42 +101,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(json.dumps(record, indent=2, sort_keys=True))
     return 0
-
-
-def _write_safetensors(
-    path: Path,
-    arrays: dict[str, np.ndarray[tuple[int, ...], np.dtype[np.float32]]],
-    metadata: dict[str, str],
-) -> None:
-    """Write deterministic safetensors: sorted keys, canonical JSON, 8-byte padding.
-
-    The ``safetensors`` library's writer does not guarantee byte-identical output
-    across processes. This writer fixes the header order and offsets so repeated
-    conversions have the same SHA-256 while remaining readable by the standard
-    loader and MLX.
-    """
-    header: dict[str, object] = {"__metadata__": metadata}
-    chunks: list[bytes] = []
-    offset = 0
-    for name in sorted(arrays):
-        array = np.ascontiguousarray(arrays[name], dtype=np.float32)
-        if array.dtype.byteorder == ">":
-            array = array.byteswap().view(array.dtype.newbyteorder("<"))
-        payload = array.tobytes(order="C")
-        header[name] = {
-            "dtype": "F32",
-            "shape": list(array.shape),
-            "data_offsets": [offset, offset + len(payload)],
-        }
-        chunks.append(payload)
-        offset += len(payload)
-    raw_header = json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    raw_header += b" " * ((-len(raw_header)) % 8)
-    with path.open("wb") as stream:
-        stream.write(struct.pack("<Q", len(raw_header)))
-        stream.write(raw_header)
-        for payload in chunks:
-            stream.write(payload)
 
 
 def _extract(
@@ -186,13 +144,6 @@ def _copy_metadata(config: Path, output_dir: Path, assets_dir: Path) -> None:
     if source_config.is_file() and source_config != target_config:
         shutil.copyfile(source_config, output_dir / CONFIG_NAME)
 
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 if __name__ == "__main__":

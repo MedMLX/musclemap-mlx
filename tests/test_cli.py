@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from medmlx_core.errors import AssetNotReadyError
 
 from musclemap_mlx.cli import main
 from musclemap_mlx.geometry import nib as nifti_io
@@ -71,10 +72,15 @@ def test_segment_missing_input_reports_one_line(
 
 
 def test_segment_without_weights_reports_asset_error(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image = tmp_path / "image.nii.gz"
     _image(image)
+
+    def missing_weights(_model_id: str) -> Path:
+        raise AssetNotReadyError("MuscleMap converted weights unavailable")
+
+    monkeypatch.setattr("musclemap_mlx.medmlx.weights_dir", missing_weights)
     code = main(
         [
             "segment",

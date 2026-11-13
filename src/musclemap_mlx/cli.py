@@ -34,8 +34,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default="MedMLX/musclemap-mlx",
         help="Hugging Face repository (default: %(default)s)",
     )
-    download.add_argument("--revision", required=True, type=_commit, help="40-character commit")
-    download.add_argument("--model-dir", required=True, type=Path, help="Destination folder")
+    download.add_argument(
+        "--revision", type=_commit, help="Override the reviewed 40-character commit"
+    )
+    download.add_argument(
+        "--model-dir", type=Path, help="Destination folder; omit to use the cache"
+    )
 
     segment = commands.add_parser("segment", help="Segment one 3D NIfTI volume")
     segment.add_argument("--input", required=True, type=Path, help="3D NIfTI image")
@@ -85,11 +89,32 @@ def _commit(value: str) -> str:
     return value
 
 
-def _download(repo: str, revision: str, model_dir: Path) -> dict[str, object]:
+def _download(repo: str, revision: str | None, model_dir: Path | None) -> dict[str, object]:
     """Download one Hub commit into ``model_dir`` and record it for revision lookup."""
     from httpx import HTTPError
     from medmlx_core.errors import AssetNotReadyError
+    from medmlx_core.weights import weights_dir, weights_revision
 
+    if revision is None:
+        if repo != "MedMLX/musclemap-mlx":
+            raise ValueError("Custom repositories require --revision with a full reviewed commit")
+        cached = weights_dir("musclemap")
+        revision = weights_revision(cached)
+        if revision is None:
+            raise AssetNotReadyError("The completed MuscleMap cache has no revision")
+        import shutil
+
+        folder = cached if model_dir is None else model_dir.expanduser().absolute()
+        if folder != cached:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / ".medmlx-revision").unlink(missing_ok=True)
+            for source in cached.iterdir():
+                if source.is_file() and not source.name.startswith("."):
+                    shutil.copyfile(source, folder / source.name)
+            (folder / ".medmlx-revision").write_text(revision + "\n", encoding="utf-8")
+        return {"model_dir": folder.as_posix(), "repo": repo, "revision": revision}
+    if model_dir is None:
+        raise ValueError("An explicit --revision requires --model-dir")
     hub = import_module("huggingface_hub")  # installed by medmlx-core
     folder = model_dir.expanduser().absolute()
     marker = folder / ".medmlx-revision"
@@ -104,6 +129,10 @@ def _download(repo: str, revision: str, model_dir: Path) -> dict[str, object]:
                 "config.json",
                 "contrast_agnostic_wholebody_model.json",
                 "LICENSE",
+                "NOTICE",
+                "labels.json",
+                "README.md",
+                "conversion.json",
             ],
         )
     except (HTTPError, OSError) as error:

@@ -13,10 +13,12 @@ from musclemap_mlx.geometry import (
     Float64Array,
     Int16Array,
     PreparedVolume,
+    ReadVolume,
     discretize,
     invert_logits,
     keep_largest_components,
     preprocess,
+    read_chunk,
 )
 from musclemap_mlx.network import MuscleMapUNet
 
@@ -36,6 +38,7 @@ def infer_volume(
     *,
     chunk_size: int | None = None,
     overlap_percent: int = 90,
+    source_volume: ReadVolume | None = None,
 ) -> tuple[Int16Array, int, bool]:
     """Segment one reader-grid volume and return labels plus chunking facts.
 
@@ -55,6 +58,8 @@ def infer_volume(
             call, or ``None`` for the eight-slice default.
         overlap_percent: Slice-window overlap percentage in ``[0, 100)``;
             default 90, the publisher's inference setting.
+        source_volume: NIfTI reader metadata for the upstream source-header chunk
+            round trip. Array-only callers omit this and retain float32 pixels.
 
     Returns:
         ``(labels, chunk_size_used, chunked)``. Labels are int16 on the reader
@@ -86,7 +91,12 @@ def infer_volume(
     full = np.zeros(data.shape, dtype=np.int16)
     for start in range(0, depth, effective):
         end = min(start + effective, depth)
-        prepared = preprocess(np.ascontiguousarray(data[..., start:end]), affine, spec)
+        if source_volume is None:
+            chunk_data, chunk_affine = np.ascontiguousarray(data[..., start:end]), affine
+        else:
+            chunk = read_chunk(source_volume, start, end)
+            chunk_data, chunk_affine = chunk.data, chunk.affine
+        prepared = preprocess(chunk_data, chunk_affine, spec)
         labels = _infer_prepared(prepared, spec, network, overlap)
         if labels.shape != (data.shape[0], data.shape[1], end - start):
             raise RuntimeError("MuscleMap chunk labels do not match the requested slice range")

@@ -1,0 +1,123 @@
+# MuscleMap v1.4 implementation and qualification
+
+## Reference contract
+
+The source reference is [MuscleMap/MuscleMap at
+35a2138](https://github.com/MuscleMap/MuscleMap/tree/35a2138a4a3a63be713bae5584632ffc6433b960),
+with the contrast-agnostic wholebody v1.4 checkpoint and JSON configuration from
+[Zenodo record 21929873](https://zenodo.org/records/21929873). Both source and
+publisher assets carry the MIT grant. Attribution and the complete license travel
+with the converted bundle. Conversion uses `torch.load(weights_only=True)` and
+the standard safetensors writer, followed by exact tensor comparisons.
+
+The network is MONAI's 2D residual UNet: one input, 114 outputs, channels
+(64, 128, 256, 512, 1024), strides (2, 2, 2, 2), two residual units, instance
+normalization with epsilon 1e-5 and no affine parameters, LeakyReLU slope 0.01,
+and the upstream residual and transposed-convolution ordering. All 46 float32
+checkpoint tensors retain their original names and values. The complete publisher
+label table is checked against the runtime: all 113 IDs, names, sides, regions and
+channel order must match. Background is channel/ID 0; anatomical IDs are not
+renumbered in the saved mask.
+
+Preprocessing follows `mm_segment.py`: apply NIfTI scaling, orient to RAS,
+resample to `[1, 1, -1]` mm (retain source slice spacing), normalize nonzero
+voxels, crop positive foreground with margin 20, then pad at the end to at least
+256x256x1. The slice inferer uses 256x256 windows, batch size 1, Gaussian sigma
+scale 0.125 and 90% overlap. Inverse pad/crop, bilinear spacing restoration and
+orientation run on logits before argmax and anatomical remapping. Largest
+6-connected components are selected after assembling all chunks.
+
+Chunking follows `mm_util.run_inference`: slice the last source storage axis,
+write each float32 chunk using the source NIfTI header, then preprocess each
+chunk independently. NiBabel rescales float32 data stored with an integer header;
+this can change zeros and therefore nonzero normalization. The native runtime
+reproduces that round trip using a private temporary directory. Skipping it
+initially caused 228 CT and 190 MRI final-voxel differences in these examples.
+The default is eight source slices; a chunk size at least the depth skips chunk
+serialization and processes the whole image. Comparisons require the same
+chunk size.
+
+Network operations run through MLX on Metal in float32. NIfTI I/O, geometry,
+Gaussian accumulation, argmax and connected components run on the host. An
+unavailable Metal device fails explicitly. Stored output is int16, with the
+original affine, distinct qform/sform matrices and codes, and unit metadata.
+Unknown spatial units are interpreted as mm while retaining the original unit
+field; explicitly different units are rejected.
+
+## Real inputs and acceptance criteria
+
+The complete compact CT and MRI test volumes are from
+[TotalSegmentator at d89e47f](https://github.com/wasserth/TotalSegmentator/tree/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files).
+Its [official test commands](https://github.com/wasserth/TotalSegmentator/blob/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/tests.sh)
+supply the CT input to CT inference and the MRI input to `total_mr`; modality
+comes from that source definition. These are real
+images supplied as compact test examples, rather than newly synthesized images.
+Their NIfTI affines define 3 mm voxels; both have unspecified unit fields, qform
+code 0 and sform code 2. No header fields were altered for the experiment.
+
+| Input | Shape | Orientation | Foreground IDs present |
+| --- | --- | --- | --- |
+| `example_ct_sm.nii.gz` | 122x101x30 | RAS | 10 |
+| `example_mr_sm.nii.gz` | 117x91x20 | LPS | 10 |
+
+Acceptance was fixed before comparison: finite float32 network and restored
+logits within `atol=5e-4, rtol=1e-5`; exact final anatomical masks after component
+filtering; equal output shape, affine, spatial forms/codes and units; int16
+storage. The same tensor windows are used for network comparisons. Restored-logit
+comparisons include native preprocessing, Gaussian aggregation and inverse
+geometry. CPU reduction rounding is reported separately.
+
+## Results
+
+Qualification on 2026-11-13 used Python 3.13, MLX 0.32.4 and float32 on an Apple
+Silicon Mac, with the shared GPU lock. The independent reference used Python 3.11,
+PyTorch 2.4.1, MONAI 1.3.2, NumPy 1.24.4, NiBabel 5.2.1 and SciPy 1.11.4,
+with one CPU thread. Reference execution completed both on the Mac and on a
+DGX Spark GB10 using its CPU with the same pinned dependencies. Both examples
+used eight-slice chunks and 90% overlap. The table reports the largest error
+across these two independent reference executions.
+
+| Measurement | CT | MRI |
+| --- | --- | --- |
+| Maximum network-logit absolute error | 1.47e-4 | 1.36e-4 |
+| Maximum restored-logit absolute error | 1.15e-4 | 1.03e-4 |
+| Final mismatched voxels | 0 / 369,660 | 0 / 212,940 |
+| Dice for every foreground ID present | 1.0 | 1.0 |
+| Output grid, forms and units | Preserved | Preserved |
+
+CT preprocessing differed by at most 4.77e-7 from the reference after float32
+normalization; MRI preprocessing matched exactly. Reference reader pixels were
+checked independently with pinned NiBabel. The complete public package runner
+also produced the exact reference masks. These measurements establish parity on
+two compact examples, without measuring manual-label accuracy or every one of
+the 113 anatomical structures.
+
+## Reproduce
+
+In a development checkout, provision the runtime and the pinned reference
+environment. The reference can run on a separate Linux host; the native comparison
+requires Apple Silicon and Metal.
+
+```sh
+make env
+make oracle-env
+mkdir -p weights build/real
+curl -L https://zenodo.org/records/21929873/files/contrast_agnostic_wholebody_model.pth -o weights/contrast_agnostic_wholebody_model.pth
+curl -L https://zenodo.org/records/21929873/files/contrast_agnostic_wholebody_model.json -o weights/contrast_agnostic_wholebody_model.json
+curl -L https://zenodo.org/records/21929873/files/LICENSE -o weights/LICENSE
+make convert
+curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_ct_sm.nii.gz -o build/real/ct.nii.gz
+curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_mr_sm.nii.gz -o build/real/mr.nii.gz
+
+# Repeat with mr.nii.gz and a separate reference/output folder for MRI.
+PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  environment/oracle/.venv/bin/python scripts/make_reference_fixtures.py \
+  --assets weights --image build/real/ct.nii.gz --output build/real/ct-reference
+perfkit gpu lock run -- .venv/bin/python scripts/qualify_real.py \
+  --reference build/real/ct-reference --weights build/msk-porting/weights \
+  --output build/real/ct-parity.json
+```
+
+`qualify_real.py` exits unsuccessfully for logit-tolerance failures or any final
+mask mismatch and records per-chunk errors and per-label Dice. Generated medical
+images, weights, reference arrays and run output stay outside Git.

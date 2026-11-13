@@ -22,7 +22,7 @@ from medmlx_core.errors import (
     ModelExecutionError,
 )
 from medmlx_core.runtime import import_mlx
-from medmlx_core.weights import weights_revision
+from medmlx_core.weights import weights_dir, weights_revision
 
 from musclemap_mlx.config import (
     CONFIG_NAME,
@@ -35,8 +35,8 @@ from musclemap_mlx.config import (
 OUTPUT_NAME = "mask.nii.gz"
 DEFAULT_OVERLAP_PERCENT = 90
 _WEIGHTS_HINT = (
-    "No converted MuscleMap weights are hosted yet. Convert the publisher checkpoint "
-    "locally to model.safetensors and pass its folder as weights_path."
+    "Run musclemap-mlx download or medmlx setup musclemap, "
+    "or pass a folder containing model.safetensors as weights_path."
 )
 
 _SPEC = default_spec()
@@ -49,7 +49,7 @@ MODEL = {
         "Segment 113 whole-body muscle and bone structures in MRI or CT with the "
         "contrast-agnostic MuscleMap v1.4 2D MONAI UNet."
     ),
-    "setup_supported": False,
+    "setup_supported": True,
     "labels": {str(item["value"]): str(item["name"]) for item in _SPEC.label_details},
 }
 
@@ -77,9 +77,8 @@ def run(
         image_path: 3D NIfTI (``.nii`` or ``.nii.gz``) in millimetres. MR or CT
             contrast is accepted; the model is contrast-agnostic. Header slope and
             intercept are applied on read.
-        weights_path: Folder containing ``model.safetensors`` from the local
-            converter. There is no hosted converted checkpoint yet, so omitting
-            this raises an asset error instead of downloading.
+        weights_path: Local folder containing ``model.safetensors``, or omitted
+            to download the pinned MedMLX bundle once and reuse its cache.
         output_dir: Destination folder for ``mask.nii.gz``. Created only after
             validation.
         chunk_size: Positive number of axial slices processed per independent
@@ -135,17 +134,11 @@ def run(
         raise InvalidInputError("MuscleMap output must differ from the input image")
     if mask_path.resolve() == source.resolve():
         raise InvalidInputError("MuscleMap output must differ from the input image")
-    if weights_path is None:
-        raise AssetNotReadyError(
-            "MuscleMap converted weights are not configured",
-            reason="no automatic converted weights",
-            hint=_WEIGHTS_HINT,
-        )
-    weights = resolve_weights_file(weights_path)
     try:
         volume = read_nifti(source)
     except (OSError, ValueError, ImageFileError) as error:
         raise InvalidInputError(f"Could not read MuscleMap input: {error}") from error
+    weights = resolve_weights_file(weights_dir(MODEL_ID) if weights_path is None else weights_path)
     spec = _load_spec(weights)
     mx = import_mlx()
     mx.reset_peak_memory()
@@ -161,6 +154,7 @@ def run(
             network,
             chunk_size=chunk_size,
             overlap_percent=overlap_percent,
+            source_volume=volume,
         )
     except (ValueError, RuntimeError) as error:
         raise ModelExecutionError(f"MuscleMap inference failed: {error}") from error
@@ -192,9 +186,6 @@ def run(
             "peak_memory_bytes": int(mx.get_peak_memory()),
             "duration_seconds": round(time.perf_counter() - started, 3),
             "requires_human_review": True,
-            "warnings": [
-                "Synthetic and released-weight checks only; no patient-data validation."
-            ],
         },
     }
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "musclemap-mlx"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Segment 113 whole-body muscle and bone structures with MuscleMap v1.4 and native MLX"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -27,7 +27,6 @@ keywords = [
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "Private :: Do Not Upload",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
   "Operating System :: MacOS :: MacOS X",
@@ -40,7 +39,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "medmlx-core==0.2.6",
+  "medmlx-core>=0.2.7,<0.3",
   "mlx==0.32.4; platform_system == 'Darwin' and platform_machine == 'arm64'",
   "nibabel>=5.3,<6",
   "numpy>=2.0,<3",
@@ -51,7 +50,7 @@ dependencies = [
 Homepage = "https://medmlx.org"
 Repository = "https://github.com/MedMLX/musclemap-mlx"
 Issues = "https://github.com/MedMLX/musclemap-mlx/issues"
-Weights = "https://zenodo.org/records/21929873"
+Weights = "https://huggingface.co/MedMLX/musclemap-mlx"
 Upstream = "https://github.com/MuscleMap/MuscleMap"
 MedMLX = "https://github.com/MedMLX/medmlx"
 [project.scripts]

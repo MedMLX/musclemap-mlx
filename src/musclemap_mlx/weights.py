@@ -28,8 +28,7 @@ if TYPE_CHECKING:
 type Float32Array = npt.NDArray[np.float32]
 
 _WEIGHTS_HINT = (
-    "Convert the publisher checkpoint locally and pass the folder containing "
-    "model.safetensors as weights_path."
+    "Run musclemap-mlx download or pass a folder containing model.safetensors as weights_path."
 )
 
 

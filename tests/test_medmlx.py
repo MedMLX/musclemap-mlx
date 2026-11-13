@@ -23,7 +23,7 @@ def _image(path: Path) -> None:
 def test_declaration_preserves_labels_and_setup_boundary() -> None:
     assert medmlx.MODEL["id"] == "musclemap"
     assert medmlx.MODEL["task"] == "segmentation"
-    assert medmlx.MODEL["setup_supported"] is False
+    assert medmlx.MODEL["setup_supported"] is True
     labels = cast(dict[str, str], medmlx.MODEL["labels"])
     assert len(labels) == 114
     assert labels["0"] == "background"
@@ -65,6 +65,10 @@ def test_missing_weights_is_an_asset_error(tmp_path: Path, monkeypatch: pytest.M
         raise AssertionError("MLX was imported before weights were resolved")
 
     monkeypatch.setattr(medmlx, "import_mlx", fail_mlx)
+    def missing_weights(_model_id: str) -> Path:
+        raise AssetNotReadyError("MuscleMap converted weights unavailable")
+
+    monkeypatch.setattr(medmlx, "weights_dir", missing_weights)
     with pytest.raises(AssetNotReadyError, match="converted weights"):
         medmlx.run(image_path=image, output_dir=tmp_path / "out")
 
