@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "musclemap-mlx"
-version = "0.1.0"
+version = "0.1.1"
 description = "Segment 113 whole-body muscle and bone structures with MuscleMap v1.4 and native MLX"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -47,9 +47,8 @@ dependencies = [
 ]
 
 [project.urls]
+Documentation = "https://huggingface.co/MedMLX/musclemap-mlx/blob/a80858be29d9d24a00ff53547303d1e6459d68e1/technical.md"
 Homepage = "https://medmlx.org"
-Repository = "https://github.com/MedMLX/musclemap-mlx"
-Issues = "https://github.com/MedMLX/musclemap-mlx/issues"
 Weights = "https://huggingface.co/MedMLX/musclemap-mlx"
 Upstream = "https://github.com/MuscleMap/MuscleMap"
 MedMLX = "https://github.com/MedMLX/medmlx"

@@ -94,30 +94,44 @@ the 113 anatomical structures.
 
 ## Reproduce
 
-In a development checkout, provision the runtime and the pinned reference
-environment. The reference can run on a separate Linux host; the native comparison
-requires Apple Silicon and Metal.
+Install the published runtime and download the public qualification tools at their
+reviewed revision. The reference uses Python 3.11; native execution uses Python
+3.13 on Apple Silicon. The source distribution supplies the configuration parser
+for the reference environment, without installing an MLX runtime there.
 
 ```sh
-make env
-make oracle-env
-mkdir -p weights build/real
+uv venv --python 3.13
+source .venv/bin/activate
+uv pip install musclemap-mlx==0.1.1
+hf download MedMLX/musclemap-mlx --revision 05fa11f1f13ded18d2efdb7a8e1dab77bd600234 --include 'qualification/*' --local-dir validation
+
+# Obtain the same published source used by the installed runtime.
+python - <<'PYCODE'
+import json, urllib.request
+metadata = json.load(urllib.request.urlopen("https://pypi.org/pypi/musclemap-mlx/0.1.1/json"))
+url = next(item["url"] for item in metadata["urls"] if item["packagetype"] == "sdist")
+urllib.request.urlretrieve(url, "musclemap_mlx-0.1.1.tar.gz")
+PYCODE
+tar -xf musclemap_mlx-0.1.1.tar.gz
+uv venv --python 3.11 oracle-env
+uv pip install --python oracle-env/bin/python -r validation/qualification/requirements.txt
+mkdir -p weights results
 curl -L https://zenodo.org/records/21929873/files/contrast_agnostic_wholebody_model.pth -o weights/contrast_agnostic_wholebody_model.pth
 curl -L https://zenodo.org/records/21929873/files/contrast_agnostic_wholebody_model.json -o weights/contrast_agnostic_wholebody_model.json
 curl -L https://zenodo.org/records/21929873/files/LICENSE -o weights/LICENSE
-make convert
-curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_ct_sm.nii.gz -o build/real/ct.nii.gz
-curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_mr_sm.nii.gz -o build/real/mr.nii.gz
+curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_ct_sm.nii.gz -o ct.nii.gz
+curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_mr_sm.nii.gz -o mr.nii.gz
 
-# Repeat with mr.nii.gz and a separate reference/output folder for MRI.
-PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-  environment/oracle/.venv/bin/python scripts/make_reference_fixtures.py \
-  --assets weights --image build/real/ct.nii.gz --output build/real/ct-reference
-.venv/bin/python scripts/qualify_real.py \
-  --reference build/real/ct-reference --weights build/msk-porting/weights \
-  --output build/real/ct-parity.json
+PYTHONPATH=musclemap_mlx-0.1.1/src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  oracle-env/bin/python validation/qualification/make_reference_fixtures.py \
+  --assets weights --image ct.nii.gz --output results/ct-reference
+musclemap-mlx download --model-dir converted
+python validation/qualification/qualify_real.py \
+  --reference results/ct-reference --weights converted --output results/ct-parity.json
 ```
 
-`qualify_real.py` exits unsuccessfully for logit-tolerance failures or any final
-mask mismatch and records per-chunk errors and per-label Dice. Generated medical
-images, weights, reference arrays and run output stay outside Git.
+Repeat the last reference and comparison commands with `mr.nii.gz` and separate
+MRI result paths. The recorder can run on Linux; copy its result folder to the
+Mac for native comparison. `qualify_real.py` exits unsuccessfully for logit
+failures or any final mask mismatch and records per-chunk errors and per-label
+Dice. Generated images, weights, reference arrays and run output stay outside Git.

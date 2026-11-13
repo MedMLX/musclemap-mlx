@@ -88,7 +88,7 @@ PyTorch network fallback.
 ## Weights and offline use
 
 The approximately 105 MB float32 bundle is hosted at
-[MedMLX/musclemap-mlx](https://huggingface.co/MedMLX/musclemap-mlx/tree/a798b3073e3b2c449987c13aa193626aaacc3092),
+[MedMLX/musclemap-mlx](https://huggingface.co/MedMLX/musclemap-mlx),
 pinned to revision `a798b3073e3b2c449987c13aa193626aaacc3092`. It includes the
 publisher configuration, original label metadata and MIT notices.
 
@@ -109,12 +109,12 @@ callers supply a local bundle with `weights_path="musclemap-weights"`.
 The native implementation was compared with the pinned MuscleMap v1.4 reference
 on real CT and MRI examples. Reproduction commands, acceptance criteria and
 measurements are in
-[docs/technical.md](https://github.com/MedMLX/musclemap-mlx/blob/dev/docs/technical.md).
+[docs/technical.md](https://huggingface.co/MedMLX/musclemap-mlx/blob/a80858be29d9d24a00ff53547303d1e6459d68e1/technical.md).
 These two compact examples establish implementation parity; anatomical accuracy
 against manual segmentations and coverage of all 113 structures were not measured.
 
 Code and publisher weights are MIT licensed. See
-[UPSTREAM_LICENSE](https://github.com/MedMLX/musclemap-mlx/blob/dev/UPSTREAM_LICENSE)
-and [THIRD_PARTY_NOTICES.md](https://github.com/MedMLX/musclemap-mlx/blob/dev/THIRD_PARTY_NOTICES.md).
+[publisher license](https://huggingface.co/MedMLX/musclemap-mlx/blob/a798b3073e3b2c449987c13aa193626aaacc3092/LICENSE)
+and [attribution](https://huggingface.co/MedMLX/musclemap-mlx/blob/a798b3073e3b2c449987c13aa193626aaacc3092/NOTICE).
 The original checkpoint and configuration are published in
 [Zenodo record 21929873](https://zenodo.org/records/21929873).
