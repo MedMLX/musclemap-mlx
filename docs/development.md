@@ -20,7 +20,7 @@ make fixtures
 MEDMLX_TEST_REFERENCE=build/msk-porting/fixtures make oracle
 MEDMLX_TEST_WEIGHTS=build/msk-porting/weights \
 MEDMLX_TEST_REFERENCE=build/msk-porting/fixtures \
-perfkit gpu lock run -- make metal
+make metal
 ```
 
 Weights, medical images, fixtures and generated results belong in ignored

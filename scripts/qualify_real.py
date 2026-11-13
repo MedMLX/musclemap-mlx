@@ -1,8 +1,8 @@
 """Compare native Metal inference with recorded real-image MONAI 1.3.2 outputs.
 
-Run under the shared GPU lock after recording with make_reference_fixtures.py:
+Run after recording with make_reference_fixtures.py:
 
-    perfkit gpu lock run -- .venv/bin/python scripts/qualify_real.py \
+    .venv/bin/python scripts/qualify_real.py \
         --reference build/reference --weights build/converted --output build/parity.json
 
 The existing float32 contract is atol=5e-4, rtol=1e-5 for network and restored

@@ -70,7 +70,7 @@ geometry. CPU reduction rounding is reported separately.
 ## Results
 
 Qualification on 2026-11-13 used Python 3.13, MLX 0.32.4 and float32 on an Apple
-Silicon Mac, with the shared GPU lock. The independent reference used Python 3.11,
+Silicon Mac. The independent reference used Python 3.11,
 PyTorch 2.4.1, MONAI 1.3.2, NumPy 1.24.4, NiBabel 5.2.1 and SciPy 1.11.4,
 with one CPU thread. Reference execution completed both on the Mac and on a
 DGX Spark GB10 using its CPU with the same pinned dependencies. Both examples
@@ -113,7 +113,7 @@ curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24
 PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   environment/oracle/.venv/bin/python scripts/make_reference_fixtures.py \
   --assets weights --image build/real/ct.nii.gz --output build/real/ct-reference
-perfkit gpu lock run -- .venv/bin/python scripts/qualify_real.py \
+.venv/bin/python scripts/qualify_real.py \
   --reference build/real/ct-reference --weights build/msk-porting/weights \
   --output build/real/ct-parity.json
 ```
