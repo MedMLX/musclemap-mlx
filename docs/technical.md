@@ -92,6 +92,13 @@ also produced the exact reference masks. These measurements establish parity on
 two compact examples, without measuring manual-label accuracy or every one of
 the 113 anatomical structures.
 
+## Peak memory
+
+The README's peak MLX memory is `details.peak_memory_bytes` (`mx.get_peak_memory()`
+after `mx.reset_peak_memory()`) from one `musclemap-mlx==0.1.1` run with default
+settings (eight-slice chunks, 90% overlap) on a 543x543x568 autoPET-III whole-body CT
+resampled to 1.5 mm: 542,336,612 bytes, measured on 2026-11-13 with MLX 0.32.4.
+
 ## Reproduce
 
 Install the published runtime and download the public qualification tools at their

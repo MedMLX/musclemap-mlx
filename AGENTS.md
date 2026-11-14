@@ -5,7 +5,7 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
 ## Rules
 
 - Work on dev. Main is the last release; do not release this package.
-- Follow sibling standards/runtime-standard.md and templates/runtime.
+- README.md follows the MedMLX runtime README layout; match segresnet-mlx.
 - Keep the 114 output channels, the original 113 anatomical label IDs, instance
   normalization (no affine), LeakyReLU 0.01 and residual semantics.
 - Preserve RAS orientation, `pix_dim [1, 1, -1]` (keep source slice spacing),
@@ -39,9 +39,6 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
   docs/development.md.
 - This file, Makefile, docs/development.md, environment/ and reference/ are
   dev-only.
-- Do not advertise hosted converted weights or automatic downloads before they
-  exist. `setup_supported` remains false until a converted repository is
-  published.
 
 ## Checks
 
@@ -54,7 +51,6 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
   oracle environment.
 - make convert writes deterministic safetensors and a conversion record.
 - make build builds the sdist and wheel as users would resolve them.
-- .venv/bin/python -I ../standards/check_standard.py . checks committed dev only.
 - No numerical parity has been established on patient data. Do not claim it from
   synthetic fixtures or package checks.
 - There is no hosted CI; local checks are authoritative.

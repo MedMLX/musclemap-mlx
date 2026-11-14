@@ -1,120 +1,129 @@
+<div align="center">
+
 # musclemap-mlx
 
-Segment 113 muscle and bone structures in MRI or CT NIfTI images with
-MuscleMap v1.4, running natively through MLX and Metal on Apple Silicon.
-Weights download automatically on first use.
+Segment 113 whole-body muscle and bone structures in MRI or CT with MuscleMap v1.4 in native MLX.
 
-## Install and segment
+[![PyPI](https://img.shields.io/pypi/v/musclemap-mlx)](https://pypi.org/project/musclemap-mlx/)
+[![Python](https://img.shields.io/pypi/pyversions/musclemap-mlx)](https://pypi.org/project/musclemap-mlx/)
+[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/MedMLX/musclemap-mlx/blob/v0.1.1/LICENSE)
+[![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-MLX-black?logo=apple)](https://github.com/ml-explore/mlx)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-weights-yellow)](https://huggingface.co/MedMLX/musclemap-mlx)
+[![MedMLX](https://img.shields.io/badge/MedMLX-runtime-A51C30)](https://github.com/MedMLX/medmlx)
 
-Requires an Apple Silicon Mac, Metal and Python 3.13. With
-[uv](https://docs.astral.sh/uv/):
+[Weights](https://huggingface.co/MedMLX/musclemap-mlx) · [Upstream](https://github.com/MuscleMap/MuscleMap) · [MedMLX](https://github.com/MedMLX/medmlx)
 
-```sh
+<img src="https://raw.githubusercontent.com/MedMLX/musclemap-mlx/dev/docs/example.png" alt="Coronal whole-body CT and axial slices through the pelvis and both thighs, with MuscleMap labels for the back, gluteal, hip and thigh muscles and the pelvic and femoral bones" width="100%">
+
+<sub>Whole-body CT from <a href="https://huggingface.co/datasets/YongchengYAO/autoPET-III-Lite">autoPET-III</a>, resampled to 1.5 mm and segmented with the default settings. Contours are smoothed for display.</sub>
+
+</div>
+
+| Input | Output |
+| :--- | :--- |
+| 3D MRI or CT · NIfTI | 113-label muscle and bone mask on the input grid |
+
+| Model | Weights download | Peak MLX memory | Measured on |
+| :--- | ---: | ---: | :--- |
+| `musclemap` | 105 MB | 0.5 GB | 543×543×568 whole-body CT, 1.5 mm |
+
+## Install
+
+```bash
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install musclemap-mlx
-
-# Real MRI example from TotalSegmentator's official test data.
-curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_mr_sm.nii.gz -o mri.nii.gz
-musclemap-mlx segment --input mri.nii.gz --output-dir out
+uv pip install "musclemap-mlx>=0.1.1"
 ```
 
-The command writes `out/mask.nii.gz` and prints JSON containing the output path,
-label table, device, memory use and chunking settings. To use the corresponding
-CT example, replace `example_mr_sm.nii.gz` with `example_ct_sm.nii.gz`.
-
-### Python
+## Run
 
 ```python
 from musclemap_mlx.medmlx import run
 
-result = run(image_path="mri.nii.gz", output_dir="out-python")
+result = run(image_path="mri.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
-### MedMLX
+Weights download from [`MedMLX/musclemap-mlx`](https://huggingface.co/MedMLX/musclemap-mlx)
+on first use; `musclemap-mlx download` or `medmlx setup musclemap` downloads ahead of
+time. For local weights, pass `weights_path` as a folder containing `model.safetensors`.
+
+To try it on a small public MRI from TotalSegmentator's test data:
+
+```bash
+curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_mr_sm.nii.gz -o mri.nii.gz
+```
+
+### Inputs and outputs
+
+| Argument | Meaning |
+| --- | --- |
+| `image_path` | One finite 3D MRI or CT in `.nii` or `.nii.gz`; the model is contrast-agnostic |
+| `output_dir` | Directory for `mask.nii.gz`; created if missing |
+| `weights_path` | Optional folder containing `model.safetensors` |
+| `chunk_size` | Axial slices per independent pass; default 8, a value at least the depth runs one pass |
+| `overlap_percent` | Gaussian slice-window overlap, 0–99; default 90, as upstream |
+| `overwrite` | `False` by default; an existing mask is replaced only when `True` |
+
+- **Units:** spatial units must be millimetres or unspecified (read as millimetres, as
+  upstream). 4D images are rejected.
+- **Mask:** int16 with background 0 and the original 113 anatomical IDs (not channel
+  indices), on the input grid with its affine, qform, sform and units. The largest
+  6-connected component of each label is kept.
+- **Chunking:** each chunk is normalized independently, as upstream, so changing
+  `chunk_size` can change the mask.
+- **Return value:** `{"outputs": {"mask": path}, "details": {...}}`; `details` lists every
+  label ID and name, voxel counts, chunking and peak MLX memory.
+- **Errors:** invalid inputs raise `InvalidInputError`; missing or mismatched weights
+  raise `AssetNotReadyError`; inference failures raise `ModelExecutionError`.
+
+### Labels
+
+IDs encode region, structure and side: the last digit is 1 for left and 2 for right,
+except the sacrum (6160).
+
+| Region | IDs | Structures |
+| :--- | :--- | :--- |
+| Neck | 1101–1162 | Levator scapulae, semispinalis cervicis and multifidus, semispinalis capitis, splenius capitis, sternocleidomastoid, longus colli, trapezius |
+| Shoulder | 2101–2142 | Supraspinatus, subscapularis, infraspinatus, deltoid |
+| Thorax | 4101–4102 | Rhomboid |
+| Abdomen | 5101–5142 | Thoracolumbar multifidus, erector spinae, psoas major, quadratus lumborum, latissimus dorsi |
+| Pelvis | 6101–6222 | Gluteus minimus, medius and maximus, tensor fasciae latae, iliacus, piriformis, pectineus, obturator internus and externus, gemelli and quadratus femoris; ilium, sacrum, femur |
+| Thigh | 7101–7232 | Vastus lateralis, intermedius and medialis, rectus femoris, sartorius, gracilis, semimembranosus, semitendinosus, biceps femoris long and short heads, adductor magnus, longus and brevis; patella |
+| Leg | 8101–8222 | Tibialis anterior and posterior, peroneus longus, soleus, medial and lateral gastrocnemius, flexor hallucis longus, extensor digitorum and hallucis longus, flexor digitorum longus, popliteus, plantaris; tibia, fibula |
+
+### Command line
+
+```bash
+musclemap-mlx segment --input mri.nii.gz --output-dir out
+```
+
+`segment` takes the runner options as flags (`--model-dir` for `weights_path`,
+`--chunk-size`, `--overlap`, `--overwrite`) and prints the result as JSON.
+`musclemap-mlx download --model-dir musclemap-weights` exports a local copy of the weights.
+
+### Limits
+
+- Parity with the pinned MuscleMap v1.4 reference was established on real CT and MRI
+  examples; see [technical notes](https://huggingface.co/MedMLX/musclemap-mlx/blob/a80858be29d9d24a00ff53547303d1e6459d68e1/technical.md).
+  Accuracy against manual segmentations was not measured here.
+- Inference requires Apple Silicon with Metal.
+
+## Use with MedMLX
+
+Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `musclemap` from an MCP client. Weights download on first use.
 
 ```sh
-uv pip install 'medmlx[segment]>=0.9.1,<0.10'
-medmlx describe musclemap
-medmlx setup musclemap
-medmlx run musclemap --arg image_path=mri.nii.gz output_dir=out-medmlx
+uv tool install --python 3.13 "medmlx[segment,mcp]"
+MEDMLX="$(uv tool dir --bin --color never)/medmlx"
+mkdir -p "$HOME/medmlx-work"
+claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
 ```
 
-Or use its Python interface:
+For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe musclemap`.
 
-```python
-import medmlx
+> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
 
-medmlx.setup_model("musclemap")
-job = medmlx.run("musclemap", arguments={
-    "image_path": "mri.nii.gz",
-    "output_dir": "out-medmlx-python",
-})
-print(job["result"])
-```
+## License
 
-The MCP server exposes the same model through `list_models`, `describe_model`,
-`model_readiness`, `prepare_model` and `run_model`; poll `get_job` for setup and
-segmentation results. Start it with `medmlx serve --root .`.
-
-## Inputs and outputs
-
-Input is one finite 3D `.nii` or `.nii.gz` MRI or CT volume. Millimetre spatial
-units are supported; an unspecified unit is interpreted as millimetres, matching
-upstream. Other declared spatial units and 4D images are rejected.
-
-The output is an `int16` mask with background 0 and the original 113 anatomical
-IDs, including 1101 for left levator scapulae and 8222 for right plantaris. Its
-shape, affine, qform, sform and spatial-unit metadata follow the input. The
-largest 6-connected component of each label is retained after chunk assembly.
-The JSON result lists every anatomical ID and name.
-
-| Option | Meaning | Default |
-| --- | --- | --- |
-| `--input` | 3D NIfTI image | Required |
-| `--output-dir` | Destination for `mask.nii.gz` | Required |
-| `--model-dir` | Local folder containing `model.safetensors` | Automatic download/cache |
-| `--chunk-size` | Source storage-axis slices per independent pass | Eight |
-| `--overlap` | Gaussian window overlap, integer 0–99 percent | 90 |
-| `--overwrite` | Replace an existing output | Off |
-
-Each chunk is independently normalized. For integer source images, chunking
-also reproduces upstream's source-header NIfTI round trip before normalization.
-Changing chunk size can change the mask. A chunk size at least the source depth
-uses one whole-volume pass. Inference uses MLX on Metal; there is no CPU or
-PyTorch network fallback.
-
-## Weights and offline use
-
-The approximately 105 MB float32 bundle is hosted at
-[MedMLX/musclemap-mlx](https://huggingface.co/MedMLX/musclemap-mlx),
-pinned to revision `a798b3073e3b2c449987c13aa193626aaacc3092`. It includes the
-publisher configuration, original label metadata and MIT notices.
-
-```sh
-# Pre-download to the shared cache; subsequent runs can work offline.
-musclemap-mlx download
-
-# Export a local bundle, then supply it explicitly.
-musclemap-mlx download --model-dir musclemap-weights
-musclemap-mlx segment --input mri.nii.gz --model-dir musclemap-weights --output-dir out-local
-```
-
-MedMLX and this package share the `MEDMLX_ASSET_CACHE` cache setting. Python
-callers supply a local bundle with `weights_path="musclemap-weights"`.
-
-## Qualification and license
-
-The native implementation was compared with the pinned MuscleMap v1.4 reference
-on real CT and MRI examples. Reproduction commands, acceptance criteria and
-measurements are in
-[docs/technical.md](https://huggingface.co/MedMLX/musclemap-mlx/blob/a80858be29d9d24a00ff53547303d1e6459d68e1/technical.md).
-These two compact examples establish implementation parity; anatomical accuracy
-against manual segmentations and coverage of all 113 structures were not measured.
-
-Code and publisher weights are MIT licensed. See
-[publisher license](https://huggingface.co/MedMLX/musclemap-mlx/blob/a798b3073e3b2c449987c13aa193626aaacc3092/LICENSE)
-and [attribution](https://huggingface.co/MedMLX/musclemap-mlx/blob/a798b3073e3b2c449987c13aa193626aaacc3092/NOTICE).
-The original checkpoint and configuration are published in
-[Zenodo record 21929873](https://zenodo.org/records/21929873).
+[MIT](https://github.com/MedMLX/musclemap-mlx/blob/v0.1.1/LICENSE). See [upstream license](https://github.com/MedMLX/musclemap-mlx/blob/v0.1.1/UPSTREAM_LICENSE) and [third-party notices](https://github.com/MedMLX/musclemap-mlx/blob/v0.1.1/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms ([Zenodo record 21929873](https://zenodo.org/records/21929873), MIT).
