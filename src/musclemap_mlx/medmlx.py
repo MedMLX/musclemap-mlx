@@ -21,6 +21,7 @@ from medmlx_core.errors import (
     InvalidInputError,
     ModelExecutionError,
 )
+from medmlx_core.outputs import artifact
 from medmlx_core.runtime import import_mlx
 from medmlx_core.weights import weights_dir, weights_revision
 
@@ -90,9 +91,11 @@ def run(
             always refused.
 
     Returns:
-        ``{"outputs": {"mask": absolute path}, "details": {...}}``. Details include
-        the original labels, MLX device, peak MLX memory, chunking facts, duration
-        and ``requires_human_review``.
+        ``{"outputs": {"mask": absolute path}, "artifacts": {"mask": ...},
+        "details": {...}}``. The ``mask`` artifact is a ``label_map`` in
+        ``image_physical`` space on the ``image_path`` grid, listing the model's
+        background and anatomical IDs. Details include the original labels, MLX
+        device, peak MLX memory, chunking facts, duration and ``requires_human_review``.
 
     Raises:
         InvalidInputError: The image, output folder, booleans, chunk size, overlap
@@ -172,6 +175,17 @@ def run(
     }
     return {
         "outputs": {"mask": mask_path.resolve().as_posix()},
+        "artifacts": {
+            "mask": artifact(
+                kind="label_map",
+                coordinate_space="image_physical",
+                grid_of="image_path",
+                labels=[
+                    {"value": int(item["value"]), "name": str(item["name"])}
+                    for item in spec.label_details
+                ],
+            )
+        },
         "details": {
             "weights_revision": weights_revision(weights.parent),
             "labels": [dict(item) for item in spec.label_details],

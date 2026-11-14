@@ -8,6 +8,7 @@ from typing import cast
 import numpy as np
 import numpy.typing as npt
 import pytest
+from medmlx_core.outputs import validate_outputs
 
 from musclemap_mlx import medmlx
 from musclemap_mlx.config import default_spec
@@ -61,6 +62,13 @@ def test_public_runner_writes_the_recorded_mask(
         overlap_percent=90,
     )
     outputs = cast(dict[str, str], result["outputs"])
+    _, artifacts = validate_outputs(result)
+    assert artifacts["mask"]["kind"] == "label_map"
+    assert artifacts["mask"].get("grid_of") == "image_path"
+    assert artifacts["mask"].get("labels") == [
+        {"value": int(item["value"]), "name": str(item["name"])}
+        for item in default_spec().label_details
+    ]
     mask = np.asanyarray(read_nifti(Path(outputs["mask"])).image.dataobj)
     with np.load(reference_dir / "pipeline.npz", allow_pickle=False) as fixture:
         expected = fixture["labels"]

@@ -72,8 +72,9 @@ curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24
   6-connected component of each label is kept.
 - **Chunking:** each chunk is normalized independently, as upstream, so changing
   `chunk_size` can change the mask.
-- **Return value:** `{"outputs": {"mask": path}, "details": {...}}`; `details` lists every
-  label ID and name, voxel counts, chunking and peak MLX memory.
+- **Return value:** `{"outputs": {"mask": path}, "artifacts": {"mask": ...}, "details": {...}}`;
+  the `mask` artifact lists every label ID and name and the input grid it is on, and `details`
+  holds voxel counts, chunking and peak MLX memory.
 - **Errors:** invalid inputs raise `InvalidInputError`; missing or mismatched weights
   raise `AssetNotReadyError`; inference failures raise `ModelExecutionError`.
 
