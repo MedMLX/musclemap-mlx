@@ -126,6 +126,16 @@ voxels total). All seven recorded network windows passed the existing
 and scheduling comparison also preserved all 24,980,592 blended logits in a
 two-slice CT workload bit for bit.
 
+Chunked runs then prepare the next chunk (source-header round trip and
+preprocessing) on one worker thread while the current chunk runs on Metal. On
+2026-11-15, with the same setup and twelve alternating pairs against `7a5169f`,
+warm CT time fell from 5.79 s to 5.50 s (paired 96% ratio interval
+0.914–0.956); MRI fell from 2.37 s to 2.26 s (0.938–0.996). Masks were
+identical and peak process footprint was unchanged. A window runs in about
+6.9 ms, which is now about 85% of chunk time. Zero-padding the 114-channel top
+layer to 128 channels reduced it to 6.3 ms but selected an MLX convolution with
+about 167 MB more peak memory, so it was not adopted.
+
 ## Peak memory
 
 The README's peak MLX memory is `details.peak_memory_bytes` (`mx.get_peak_memory()`

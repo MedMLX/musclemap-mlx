@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import cast
 
 import numpy as np
@@ -85,19 +86,31 @@ def infer_volume(
         labels = _infer_prepared(prepared, spec, network, overlap)
         return keep_largest_components(labels), effective, False
 
-    full = np.zeros(data.shape, dtype=np.int16)
-    for start in range(0, depth, effective):
-        end = min(start + effective, depth)
+    def prepare_chunk(start: int, end: int) -> PreparedVolume:
         if source_volume is None:
             chunk_data, chunk_affine = np.ascontiguousarray(data[..., start:end]), affine
         else:
             chunk = read_chunk(source_volume, start, end)
             chunk_data, chunk_affine = chunk.data, chunk.affine
-        prepared = preprocess(chunk_data, chunk_affine, spec)
-        labels = _infer_prepared(prepared, spec, network, overlap)
-        if labels.shape != (data.shape[0], data.shape[1], end - start):
-            raise RuntimeError("MuscleMap chunk labels do not match the requested slice range")
-        full[..., start:end] = labels
+        return preprocess(chunk_data, chunk_affine, spec)
+
+    full = np.zeros(data.shape, dtype=np.int16)
+    ranges = [(start, min(start + effective, depth)) for start in range(0, depth, effective)]
+    # Chunks are independent, so the next chunk's host read and preprocessing
+    # run on one worker thread while this chunk's windows run on Metal. Only one
+    # prepared single-channel chunk is held ahead; logits are never overlapped.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending: Future[PreparedVolume] = executor.submit(prepare_chunk, *ranges[0])
+        for index, (start, end) in enumerate(ranges):
+            prepared = pending.result()
+            if index + 1 < len(ranges):
+                pending = executor.submit(prepare_chunk, *ranges[index + 1])
+            labels = _infer_prepared(prepared, spec, network, overlap)
+            if labels.shape != (data.shape[0], data.shape[1], end - start):
+                raise RuntimeError(
+                    "MuscleMap chunk labels do not match the requested slice range"
+                )
+            full[..., start:end] = labels
     return keep_largest_components(full), effective, True
 
 
