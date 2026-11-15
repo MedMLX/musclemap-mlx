@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "musclemap-mlx"
-version = "0.1.1"
+version = "0.2.0"
 description = "Segment 113 whole-body muscle and bone structures with MuscleMap v1.4 and native MLX"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"

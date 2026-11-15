@@ -4,7 +4,7 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
 
 ## Rules
 
-- Work on dev. Main is the last release; do not release this package.
+- Work on dev. Releases are cut from dev and tagged vX.Y.Z.
 - README.md follows the MedMLX runtime README layout; match segresnet-mlx.
 - Keep the 114 output channels, the original 113 anatomical label IDs, instance
   normalization (no affine), LeakyReLU 0.01 and residual semantics.
@@ -34,7 +34,7 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
 
 ## Docs and releases
 
-- `main` is the last release and only release work changes it.
+- Releases are cut from dev; each is a vX.Y.Z tag.
 - README.md is the only user documentation; developer verification belongs in
   docs/development.md.
 - This file, Makefile, docs/development.md, environment/ and reference/ are

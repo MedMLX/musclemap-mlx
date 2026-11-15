@@ -109,17 +109,17 @@ for the reference environment, without installing an MLX runtime there.
 ```sh
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install musclemap-mlx==0.1.1
+uv pip install musclemap-mlx==0.2.0
 hf download MedMLX/musclemap-mlx --revision 05fa11f1f13ded18d2efdb7a8e1dab77bd600234 --include 'qualification/*' --local-dir validation
 
 # Obtain the same published source used by the installed runtime.
 python - <<'PYCODE'
 import json, urllib.request
-metadata = json.load(urllib.request.urlopen("https://pypi.org/pypi/musclemap-mlx/0.1.1/json"))
+metadata = json.load(urllib.request.urlopen("https://pypi.org/pypi/musclemap-mlx/0.2.0/json"))
 url = next(item["url"] for item in metadata["urls"] if item["packagetype"] == "sdist")
-urllib.request.urlretrieve(url, "musclemap_mlx-0.1.1.tar.gz")
+urllib.request.urlretrieve(url, "musclemap_mlx-0.2.0.tar.gz")
 PYCODE
-tar -xf musclemap_mlx-0.1.1.tar.gz
+tar -xf musclemap_mlx-0.2.0.tar.gz
 uv venv --python 3.11 oracle-env
 uv pip install --python oracle-env/bin/python -r validation/qualification/requirements.txt
 mkdir -p weights results
@@ -129,7 +129,7 @@ curl -L https://zenodo.org/records/21929873/files/LICENSE -o weights/LICENSE
 curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_ct_sm.nii.gz -o ct.nii.gz
 curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24f5fba732a715aeb6fdc0ae34526b/tests/reference_files/example_mr_sm.nii.gz -o mr.nii.gz
 
-PYTHONPATH=musclemap_mlx-0.1.1/src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+PYTHONPATH=musclemap_mlx-0.2.0/src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   oracle-env/bin/python validation/qualification/make_reference_fixtures.py \
   --assets weights --image ct.nii.gz --output results/ct-reference
 musclemap-mlx download --model-dir converted
