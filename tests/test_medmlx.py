@@ -33,14 +33,14 @@ def test_declaration_preserves_labels_and_setup_boundary() -> None:
 
 def test_missing_image_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(InvalidInputError, match="does not exist"):
-        medmlx.segment(image_path=tmp_path / "missing.nii.gz", output_dir=tmp_path / "out")
+        medmlx.run(image_path=tmp_path / "missing.nii.gz", output_dir=tmp_path / "out")
 
 
 def test_non_bool_overwrite_is_rejected(tmp_path: Path) -> None:
     image = tmp_path / "image.nii.gz"
     _image(image)
     with pytest.raises(InvalidInputError, match="overwrite"):
-        medmlx.segment(
+        medmlx.run(
             image_path=image,
             output_dir=tmp_path / "out",
             overwrite=cast(bool, "false"),
@@ -54,7 +54,7 @@ def test_existing_output_is_rejected_before_weights(tmp_path: Path) -> None:
     output.mkdir()
     (output / medmlx.OUTPUT_NAME).write_bytes(b"kept")
     with pytest.raises(InvalidInputError, match="overwrite=true"):
-        medmlx.segment(image_path=image, output_dir=output)
+        medmlx.run(image_path=image, output_dir=output)
 
 
 def test_missing_weights_is_an_asset_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,14 +70,14 @@ def test_missing_weights_is_an_asset_error(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr(medmlx, "weights_dir", missing_weights)
     with pytest.raises(AssetNotReadyError, match="converted weights"):
-        medmlx.segment(image_path=image, output_dir=tmp_path / "out")
+        medmlx.run(image_path=image, output_dir=tmp_path / "out")
 
 
 def test_missing_converted_file_is_an_asset_error(tmp_path: Path) -> None:
     image = tmp_path / "image.nii.gz"
     _image(image)
     with pytest.raises(AssetNotReadyError, match="weights not found"):
-        medmlx.segment(
+        medmlx.run(
             image_path=image,
             weights_path=tmp_path / "weights",
             output_dir=tmp_path / "out",

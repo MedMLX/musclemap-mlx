@@ -54,7 +54,7 @@ def test_small_pipeline_labels_match_monai(
 def test_public_runner_writes_the_recorded_mask(
     mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path, tmp_path: Path
 ) -> None:
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=reference_dir / "small_input.nii.gz",
         weights_path=weights_dir,
         output_dir=tmp_path,

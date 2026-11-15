@@ -45,7 +45,7 @@ MODEL = {
     "id": MODEL_ID,
     "label": "MuscleMap v1.4 whole-body",
     "task": "segmentation",
-    "run": "musclemap_mlx.medmlx:segment",
+    "run": "musclemap_mlx.medmlx:run",
     "summary": (
         "Segment 113 whole-body muscle and bone structures in MRI or CT with the "
         "contrast-agnostic MuscleMap v1.4 2D MONAI UNet."
@@ -55,7 +55,7 @@ MODEL = {
 }
 
 
-def segment(
+def run(
     *,
     image_path: str | os.PathLike[str],
     weights_path: str | os.PathLike[str] | None = None,

@@ -38,9 +38,9 @@ uv pip install "musclemap-mlx>=0.1.1"
 ## Run
 
 ```python
-from musclemap_mlx.medmlx import segment
+from musclemap_mlx import run
 
-result = segment(image_path="mri.nii.gz", output_dir="out")
+result = run(image_path="mri.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 

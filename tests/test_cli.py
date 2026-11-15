@@ -112,7 +112,7 @@ def test_segment_result_is_json_when_stubbed(
     def fake_run(**_kwargs: object) -> dict[str, object]:
         return {"outputs": {"mask": "/tmp/mask.nii.gz"}, "details": {"requires_human_review": True}}
 
-    monkeypatch.setattr("musclemap_mlx.medmlx.segment", fake_run)
+    monkeypatch.setattr("musclemap_mlx.medmlx.run", fake_run)
     code = main(
         [
             "segment",

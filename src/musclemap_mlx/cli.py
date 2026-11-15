@@ -66,9 +66,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "download":
             result = _download(args.repo, args.revision, args.model_dir)
         else:
-            from musclemap_mlx.medmlx import segment
+            from musclemap_mlx.medmlx import run
 
-            result = segment(
+            result = run(
                 image_path=args.input,
                 weights_path=args.model_dir,
                 output_dir=args.output_dir,
