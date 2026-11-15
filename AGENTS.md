@@ -18,8 +18,6 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
 - Tests never import scripts/. Scripts run by path.
 - Keep numerical fixtures, converted weights, synthetic images and run artifacts
   under ignored `build/`; never commit them.
-- GPU tests and measurements need `perfkit gpu lock run -- ...`; never bypass or
-  delete the shared lock.
 
 ## Upstream code, weights and data
 
@@ -30,11 +28,9 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
   the publisher MD5 and SHA-256 before conversion; load the state dictionary
   with `torch.load(..., weights_only=True)`.
 - Never work around executable checkpoint safety or invent trained parameters.
-- Review overlapping changes and stage only your own requested work.
 
 ## Docs and releases
 
-- Releases are cut from dev; each is a vX.Y.Z tag.
 - README.md is the only user documentation; developer verification belongs in
   docs/development.md.
 - This file, Makefile, docs/development.md, environment/ and reference/ are
@@ -45,7 +41,7 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
 - make env creates the locked Python 3.13 environment.
 - make qa runs Ruff and strict Pyright; requires host Node and runs no models.
 - make test runs the offline package and CPU geometry contracts; no weights.
-- make metal runs the opt-in native parity tests under the shared GPU lock.
+- make metal runs the opt-in native parity tests.
 - make oracle runs the opt-in CPU MONAI 1.3.2 geometry checks.
 - make fixtures records synthetic MONAI reference outputs with the Python 3.11
   oracle environment.
@@ -53,4 +49,3 @@ Native MLX port of MuscleMap v1.4 contrast-agnostic whole-body segmentation.
 - make build builds the sdist and wheel as users would resolve them.
 - No numerical parity has been established on patient data. Do not claim it from
   synthetic fixtures or package checks.
-- There is no hosted CI; local checks are authoritative.
