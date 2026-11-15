@@ -15,6 +15,7 @@ mode="bilinear")`` pull mapping.
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -110,14 +111,15 @@ class NiftiIo(Protocol):
 class Ndimage(Protocol):
     def affine_transform(
         self,
-        input: Float64Array,
+        input: Float32Array,
         matrix: Float64Array,
         offset: Float64Array,
         output_shape: Shape3,
+        output: Float32Array,
         order: int,
         mode: str,
         prefilter: bool,
-    ) -> Float64Array: ...
+    ) -> Float32Array: ...
 
     def label(
         self, input: npt.NDArray[np.bool_], structure: npt.NDArray[np.bool_]
@@ -568,23 +570,32 @@ def _resample_monai(
 def _resample(
     data: Float32Array, transform: Float64Array, output_shape: Shape3
 ) -> Float32Array:
-    """Resample each channel with scipy's bilinear border sampler."""
+    """Resample independent channels with scipy's bilinear border sampler.
+
+    SciPy accumulates interpolation in double precision even for float32 input.
+    Writing directly into the float32 destination avoids two full-channel copies.
+    Its sampler releases the GIL; at most eight channels run concurrently.
+    """
     if data.ndim != 4:
         raise ValueError(f"Expected channel-first data, got shape {data.shape}")
     matrix = np.asarray(transform[:3, :3], dtype=np.float64)
     offset = np.asarray(transform[:3, 3], dtype=np.float64)
     output = np.empty((data.shape[0], *output_shape), dtype=np.float32)
-    for channel in range(data.shape[0]):
-        sampled = ndimage.affine_transform(
-            data[channel].astype(np.float64, copy=False),
+    def resample_channel(channel: int) -> None:
+        ndimage.affine_transform(
+            data[channel],
             matrix=matrix,
             offset=offset,
             output_shape=output_shape,
+            output=output[channel],
             order=1,
             mode="nearest",
             prefilter=False,
         )
-        output[channel] = sampled.astype(np.float32, copy=False)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        # Consume the iterator so worker failures propagate before returning.
+        for _ in executor.map(resample_channel, range(data.shape[0])):
+            pass
     return output
 
 def _normalize_nonzero(data: Float32Array) -> Float32Array:

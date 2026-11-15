@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import numpy as np
 from medmlx_core.sliding_window import sliding_window_inference
@@ -21,9 +21,6 @@ from musclemap_mlx.geometry import (
     read_chunk,
 )
 from musclemap_mlx.network import MuscleMapUNet
-
-if TYPE_CHECKING:
-    from mlx.core import array
 
 AUTO_CHUNK_SLICES = 8
 GAUSSIAN_SIGMA_SCALE = 0.125
@@ -110,16 +107,15 @@ def _infer_prepared(
     network: MuscleMapUNet,
     overlap: float,
 ) -> Int16Array:
-    inputs = prepared.data[None]
-
-    def predictor(window: array) -> array:
-        return _predict_window(network, window)
-
+    # Each slice is an independent 2D image. This makes host accumulation
+    # contiguous within a slice while preserving window order within every
+    # slice. The singleton-depth Gaussian factor in the 3D inferer is exactly 1.
+    inputs = np.moveaxis(prepared.data, -1, 0)
     result = sliding_window_inference(
         inputs,
-        (SLICE_ROI, SLICE_ROI, 1),
+        (SLICE_ROI, SLICE_ROI),
         spec.spatial_window_batch_size,
-        predictor,
+        network,
         overlap=overlap,
         mode="gaussian",
         sigma_scale=GAUSSIAN_SIGMA_SCALE,
@@ -128,11 +124,16 @@ def _infer_prepared(
         sw_device="gpu",
         device="cpu",
         predictor_input="mlx",
+        overlap_prediction=True,
     )
     logits = np.asarray(result, dtype=np.float32)
-    if logits.ndim != 5 or logits.shape[0] != 1 or int(logits.shape[1]) != spec.out_channels:
+    if (
+        logits.ndim != 4
+        or logits.shape[0] != inputs.shape[0]
+        or int(logits.shape[1]) != spec.out_channels
+    ):
         raise RuntimeError(f"MuscleMap network returned an unexpected logit shape {logits.shape}")
-    inverted = invert_logits(logits[0], prepared.geometry)
+    inverted = invert_logits(np.moveaxis(logits, 0, -1), prepared.geometry)
     labels = discretize(inverted, spec)
     expected = prepared.geometry.original_shape
     if tuple(labels.shape) != expected:
@@ -140,10 +141,3 @@ def _infer_prepared(
             f"MuscleMap labels {labels.shape} do not match the reader grid {expected}"
         )
     return labels
-
-
-def _predict_window(network: MuscleMapUNet, window: array) -> array:
-    if window.ndim != 5 or int(window.shape[-1]) != 1:
-        raise RuntimeError(f"Expected a 3D window with one slice, got {window.shape}")
-    squeezed = window[:, :, :, :, 0]
-    return network(squeezed)[..., None]

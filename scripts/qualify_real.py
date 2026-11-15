@@ -26,7 +26,6 @@ from musclemap_mlx.geometry import (
     keep_largest_components,
     preprocess,
 )
-from musclemap_mlx.pipeline import _predict_window
 from musclemap_mlx.weights import load_network
 
 
@@ -63,7 +62,7 @@ def main() -> int:
             network_error = _error(np.asarray(prediction), fixture["network_logits"])
             padded = sliding_window_inference(
                 prepared.data[None], (256, 256, 1), spec.spatial_window_batch_size,
-                lambda window: _predict_window(network, window), overlap=0.9,
+                lambda window: network(window[..., 0])[..., None], overlap=0.9,
                 mode="gaussian", sigma_scale=0.125, padding_mode="constant", cval=0.0,
                 sw_device="gpu", device="cpu", predictor_input="mlx",
             )

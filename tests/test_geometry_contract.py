@@ -38,13 +38,27 @@ def test_empty_foreground_is_rejected() -> None:
         preprocess(np.zeros((16, 16, 2), dtype=np.float32), np.eye(4), default_spec())
 
 
-def test_inverse_logits_restores_the_reader_grid() -> None:
+@pytest.mark.parametrize("spacing", [(1.0, 1.0, 1.0), (-1.5, 0.75, 2.5)])
+def test_inverse_logits_restores_the_reader_grid(spacing: tuple[float, float, float]) -> None:
     data, affine = _phantom()
+    affine[:3, :3] = np.diag(spacing)
     prepared = preprocess(data, affine, default_spec())
-    rng = np.random.default_rng(3)
-    logits = rng.normal(size=(4, *prepared.geometry.padded_shape)).astype(np.float32)
-    inverted = invert_logits(logits, prepared.geometry)
-    assert inverted.shape == (4, *prepared.geometry.original_shape)
+    geometry = prepared.geometry
+    assert geometry.crop_start == (0, 0, 0)
+    assert geometry.crop_shape == geometry.spaced_shape
+    h, w, d = np.indices(geometry.padded_shape, dtype=np.float32)
+    # Distinct channel ramps expose swapped channels and incomplete worker writes.
+    logits = np.stack([h + 2 * w + 4 * d + 16 * c for c in range(12)])
+    inverted = invert_logits(logits, geometry)
+    source_h, source_w, source_d = np.indices(data.shape, dtype=np.float32)
+    if spacing[0] < 0:
+        source_h = data.shape[0] - 1 - source_h
+    source_h = np.minimum(source_h * abs(spacing[0]), geometry.spaced_shape[0] - 1)
+    source_w = np.minimum(source_w * spacing[1], geometry.spaced_shape[1] - 1)
+    expected = np.stack([
+        source_h + 2 * source_w + 4 * source_d + 16 * c for c in range(12)
+    ])
+    assert np.array_equal(inverted, expected)
     assert inverted.dtype == np.float32
 
 

@@ -92,6 +92,40 @@ also produced the exact reference masks. These measurements establish parity on
 two compact examples, without measuring manual-label accuracy or every one of
 the 113 anatomical structures.
 
+## Inference performance
+
+The optimized runtime compiles the float32 network, exports contiguous
+channel-first logits, and blends independent slices as a 2D image batch. The
+next Metal prediction overlaps host blending. Inverse resampling writes directly
+to float32 output and processes up to eight independent channels concurrently;
+SciPy retains double-precision interpolation arithmetic. Window batch size,
+overlap, chunking, normalization and label order are preserved.
+
+Measurements on 2026-11-14 used an Apple M5 Max with 128 GB memory, macOS 27.2,
+Python 3.13.17, MLX 0.32.4, SciPy 1.18.1 and full float32 products. The baseline
+was the inference code at `d1f5538`. Each of six alternating process pairs ran
+one cold and one warmed segmentation of the complete compact images above,
+with eight-slice chunks and 90% overlap. Timing includes preprocessing, chunk
+serialization, network execution, blending, inverse geometry and component
+filtering; initial image loading and final mask writing are outside the timer.
+
+| Input | Warm baseline | Warm optimized | Cold baseline | Cold optimized | Warm speedup |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CT | 16.43 s | 6.81 s | 16.12 s | 6.82 s | 2.41x |
+| MRI | 6.02 s | 2.48 s | 6.22 s | 2.44 s | 2.43x |
+
+Times are medians across the six pairs. The paired 97% intervals for the
+optimized/baseline warm-time ratio were 0.329–0.480 for CT and 0.373–0.448 for
+MRI. Peak process-footprint increases over setup were 1839→1860 MB for CT and
+1764→1784 MB for MRI, within the 2% comparison threshold. These process counters
+include host arrays and are distinct from the MLX allocator counter below.
+
+Both complete masks matched the recorded MONAI reference exactly (582,600
+voxels total). All seven recorded network windows passed the existing
+`atol=5e-4, rtol=1e-5` contract, with maximum absolute error 1.42e-4. The layout
+and scheduling comparison also preserved all 24,980,592 blended logits in a
+two-slice CT workload bit for bit.
+
 ## Peak memory
 
 The README's peak MLX memory is `details.peak_memory_bytes` (`mx.get_peak_memory()`

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import TracebackType
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -35,6 +35,8 @@ class MuscleMapRuntime(MlxRuntime, Protocol):
     """The MLX operations this graph needs beyond the shared core protocol."""
 
     def contiguous(self, a: array, /, *, stream: object = None) -> array: ...
+
+    def compile(self, fun: Callable[[array], array]) -> Callable[[array], array]: ...
 
     def conv_transpose2d(
         self,
@@ -91,6 +93,7 @@ class MuscleMapUNet:
         self.mx = mx
         self._filters: dict[str, array] = {}
         self._prepared = False
+        self._compiled_forward = self.mx.compile(self._forward)
 
     def _prepare(self) -> None:
         if self._prepared:
@@ -271,19 +274,25 @@ class MuscleMapUNet:
             raise ValueError("MuscleMap native UNet requires float32 input")
         self._prepare()
         with self.mx.stream(self.mx.gpu):
-            channels_last = self.mx.transpose(x, (0, 2, 3, 1))
-            output = self._block(
-                channels_last,
-                "model.0",
-                "model.2",
-                "model.1",
-                1,
-                self.spec.out_channels,
-                self.spec.channels,
-                self.spec.strides,
-                is_top=True,
-            )
-            return self.mx.transpose(output, (0, 3, 1, 2))
+            return self._compiled_forward(x)
+
+    def _forward(self, x: array) -> array:
+        """Build the reusable graph after weight preparation and input admission."""
+        channels_last = self.mx.transpose(x, (0, 2, 3, 1))
+        output = self._block(
+            channels_last,
+            "model.0",
+            "model.2",
+            "model.1",
+            1,
+            self.spec.out_channels,
+            self.spec.channels,
+            self.spec.strides,
+            is_top=True,
+        )
+        # Host Gaussian blending traverses each channel spatially. Materialize
+        # that layout on Metal instead of exporting a channel-last strided view.
+        return self.mx.contiguous(self.mx.transpose(output, (0, 3, 1, 2)))
 
 
 def as_musclemap_runtime(mx: MlxRuntime) -> MuscleMapRuntime:
