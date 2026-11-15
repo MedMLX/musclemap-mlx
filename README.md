@@ -13,9 +13,9 @@ Segment 113 whole-body muscle and bone structures in MRI or CT with MuscleMap v1
 
 [Weights](https://huggingface.co/MedMLX/musclemap-mlx) · [Upstream](https://github.com/MuscleMap/MuscleMap) · [MedMLX](https://github.com/MedMLX/medmlx)
 
-<img src="https://raw.githubusercontent.com/MedMLX/musclemap-mlx/dev/docs/example.png" alt="Coronal whole-body CT and axial slices through the pelvis and both thighs, with MuscleMap labels for the back, gluteal, hip and thigh muscles and the pelvic and femoral bones" width="100%">
+<img src="https://raw.githubusercontent.com/MedMLX/musclemap-mlx/dev/docs/example.png" alt="Posterior 3D surface render of MuscleMap muscle and bone labels from neck to thigh, beside an axial CT slice through both hips with the hip and thigh muscles, pelvis and femora labeled" width="100%">
 
-<sub>Whole-body CT from <a href="https://huggingface.co/datasets/YongchengYAO/autoPET-III-Lite">autoPET-III</a>, resampled to 1.5 mm and segmented with the default settings. Contours are smoothed for display.</sub>
+<sub>Whole-body CT from <a href="https://huggingface.co/datasets/YongchengYAO/autoPET-III-Lite">autoPET-III</a>, resampled to 1.5 mm and segmented with the default settings. Surfaces and contours are smoothed for display.</sub>
 
 </div>
 

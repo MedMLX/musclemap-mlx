@@ -98,6 +98,8 @@ The README's peak MLX memory is `details.peak_memory_bytes` (`mx.get_peak_memory
 after `mx.reset_peak_memory()`) from one `musclemap-mlx==0.1.1` run with default
 settings (eight-slice chunks, 90% overlap) on a 543x543x568 autoPET-III whole-body CT
 resampled to 1.5 mm: 542,336,612 bytes, measured on 2026-11-13 with MLX 0.32.4.
+A repeat `musclemap-mlx==0.1.1` run on the same CT on 2026-11-14 (MLX 0.32.4) reported the
+same peak and `details.duration_seconds` of 1309 s.
 
 ## Reproduce
 
