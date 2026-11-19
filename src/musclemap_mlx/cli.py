@@ -51,7 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--chunk-size",
         type=int,
         default=None,
-        help="Positive axial slices per independent pass; omit for automatic",
+        help="Positive axial slices per independent pass; default 8",
     )
     segment.add_argument(
         "--overlap",
