@@ -127,6 +127,8 @@ class Ndimage(Protocol):
 
     def generate_binary_structure(self, rank: int, connectivity: int) -> npt.NDArray[np.bool_]: ...
 
+    def find_objects(self, input: npt.NDArray[np.uint16]) -> list[tuple[slice, ...] | None]: ...
+
 
 nib = cast(NiftiIo, nib_runtime)
 ndimage = cast(Ndimage, scipy_ndimage)
@@ -332,18 +334,24 @@ def keep_largest_components(labels: Int16Array) -> Int16Array:
         raise ValueError(f"Expected a 3D label map, got shape {labels.shape}")
     result = np.array(labels, dtype=np.int16, copy=True)
     structure = ndimage.generate_binary_structure(3, 1)
-    for label in np.unique(result):
-        if int(label) == 0:
+    values = np.unique(result)
+    # Every voxel of a label, hence every component, lies in the label's bounding
+    # box, and labelling the box visits voxels in the same raster order, so the
+    # components, their numbering and the kept one match a full-volume pass. The
+    # uint16 view gives each nonzero int16 ID its own find_objects index.
+    boxes = ndimage.find_objects(result.view(np.uint16))
+    for label, index in zip(values.tolist(), values.view(np.uint16).tolist(), strict=True):
+        if label == 0:
             continue
-        mask = result == label
-        if not bool(mask.any()):
-            continue
+        # find_objects returns None only for absent IDs; ``values`` are present.
+        region = result[cast(tuple[slice, slice, slice], boxes[index - 1])]
+        mask = region == label
         components, count = ndimage.label(mask, structure=structure)
         if int(count) <= 1:
             continue
         sizes = np.bincount(components.ravel())
         keep = int(np.argmax(sizes[1:])) + 1
-        result[mask & (components != keep)] = 0
+        region[mask & (components != keep)] = 0
     return np.ascontiguousarray(result)
 
 

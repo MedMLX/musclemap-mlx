@@ -136,6 +136,15 @@ identical and peak process footprint was unchanged. A window runs in about
 layer to 128 channels reduced it to 6.3 ms but selected an MLX convolution with
 about 167 MB more peak memory, so it was not adopted.
 
+The largest-component filter labels each anatomical ID inside that ID's
+bounding box (`scipy.ndimage.find_objects`) instead of scanning the whole volume
+once per ID. Raster order inside a box is the order of the full volume, so the
+component numbering, the tie between equal-sized components and the returned
+mask are unchanged. On 2026-11-18, one host run each on the M5 Max over a
+543x543x128 crop of a 57-label TotalSegmentator map of the autoPET-III CT took
+8.15 s before and 0.23 s after. The masks matched voxel for voxel there, after
+merging the labels into 15 IDs with many components each, and with negative IDs.
+
 ## Peak memory
 
 The README's peak MLX memory is `details.peak_memory_bytes` (`mx.get_peak_memory()`
