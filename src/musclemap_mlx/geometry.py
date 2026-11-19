@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast, overload
 
 import nibabel as nib_runtime
 import numpy as np
@@ -75,9 +75,17 @@ class NiftiImage(Protocol):
     dataobj: object
     header: NiftiHeader
 
-    def get_sform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
+    @overload
+    def get_sform(self) -> Float64Array: ...
 
-    def get_qform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
+    @overload
+    def get_sform(self, coded: Literal[True]) -> tuple[Float64Array | None, int]: ...
+
+    @overload
+    def get_qform(self) -> Float64Array: ...
+
+    @overload
+    def get_qform(self, coded: Literal[True]) -> tuple[Float64Array | None, int]: ...
 
     def set_sform(self, affine: Float64Array, code: int = 0) -> None: ...
 
@@ -658,10 +666,12 @@ def _correct_nifti_header(image: NiftiImage) -> None:
     norm_affine = affine_to_spacing(np.asarray(image.affine, dtype=np.float64), 3)
     if np.allclose(pixdim, norm_affine):
         return
-    sform, scode = image.get_sform(coded=True)
-    qform, qcode = image.get_qform(coded=True)
-    if sform is None or qform is None:
-        return
+    # MONAI's ``rectify_header_sform_qform`` compares the stored matrices even when
+    # their codes are 0, so a qform_code 0 file (NiBabel's default) whose sform
+    # disagrees with pixdim still takes the stored qform. Each replacement keeps
+    # the replaced form's nonzero code, as NiBabel's ``code=None`` does there.
+    sform, qform = image.get_sform(), image.get_qform()
+    scode, qcode = image.get_sform(coded=True)[1], image.get_qform(coded=True)[1]
     norm_sform = affine_to_spacing(np.asarray(sform, dtype=np.float64), 3)
     norm_qform = affine_to_spacing(np.asarray(qform, dtype=np.float64), 3)
     sform_mismatch = not np.allclose(norm_sform, pixdim)
@@ -670,12 +680,12 @@ def _correct_nifti_header(image: NiftiImage) -> None:
         if not sform_mismatch:
             return
         if not qform_mismatch:
-            image.set_sform(qform, int(qcode or 0))
+            image.set_sform(qform, int(scode))
             return
     if int(qcode or 0) != 0:
         if not qform_mismatch:
             return
         if not sform_mismatch:
-            image.set_qform(sform, int(scode or 0))
+            image.set_qform(sform, int(qcode))
             return
     image.header.set_zooms(tuple(float(value) for value in norm_affine))
