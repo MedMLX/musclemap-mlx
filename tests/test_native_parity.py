@@ -9,11 +9,12 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 from medmlx_core.outputs import validate_outputs
+from medmlx_core.typing import MlxRuntime
+from medmlx_core.volumes import read_volume
 
 from musclemap_mlx import medmlx
-from musclemap_mlx.config import default_spec
+from musclemap_mlx.config import CONVERTED_NAME, default_spec
 from musclemap_mlx.geometry import read_nifti
-from musclemap_mlx.network import MuscleMapRuntime
 from musclemap_mlx.pipeline import infer_volume
 from musclemap_mlx.weights import load_network
 
@@ -21,11 +22,11 @@ pytestmark = [pytest.mark.metal, pytest.mark.oracle]
 
 
 def test_network_64_shapes_and_finiteness(
-    mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path
+    mx: MlxRuntime, weights_dir: Path, reference_dir: Path
 ) -> None:
     with np.load(reference_dir / "network64.npz", allow_pickle=False) as fixture:
         network_input = fixture["input"]
-    network = load_network(weights_dir, default_spec())
+    network = load_network(weights_dir / CONVERTED_NAME, default_spec())
     result = network(mx.array(network_input))
     mx.eval(result)
     logits = cast(npt.NDArray[np.float32], np.asarray(result))
@@ -38,9 +39,9 @@ def test_network_64_shapes_and_finiteness(
 
 
 def test_small_pipeline_labels_match_monai(
-    mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path
+    mx: MlxRuntime, weights_dir: Path, reference_dir: Path
 ) -> None:
-    network = load_network(weights_dir, default_spec())
+    network = load_network(weights_dir / CONVERTED_NAME, default_spec())
     volume = read_nifti(reference_dir / "small_input.nii.gz")
     labels, chunk_size, chunked = infer_volume(
         volume.data, volume.affine, default_spec(), network, chunk_size=None, overlap_percent=90
@@ -52,7 +53,7 @@ def test_small_pipeline_labels_match_monai(
 
 
 def test_public_runner_writes_the_recorded_mask(
-    mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path, tmp_path: Path
+    mx: MlxRuntime, weights_dir: Path, reference_dir: Path, tmp_path: Path
 ) -> None:
     result = medmlx.run(
         image_path=reference_dir / "small_input.nii.gz",
@@ -69,7 +70,7 @@ def test_public_runner_writes_the_recorded_mask(
         {"value": int(item["value"]), "name": str(item["name"])}
         for item in default_spec().label_details
     ]
-    mask = np.asanyarray(read_nifti(Path(outputs["mask"])).image.dataobj)
+    mask = read_volume(Path(outputs["mask"]), dtype=None).data
     with np.load(reference_dir / "pipeline.npz", allow_pickle=False) as fixture:
         expected = fixture["labels"]
     assert np.array_equal(mask, expected)
@@ -83,9 +84,9 @@ def test_public_runner_writes_the_recorded_mask(
 
 
 def test_large_whole_pipeline_matches_monai(
-    mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path
+    mx: MlxRuntime, weights_dir: Path, reference_dir: Path
 ) -> None:
-    network = load_network(weights_dir, default_spec())
+    network = load_network(weights_dir / CONVERTED_NAME, default_spec())
     volume = read_nifti(reference_dir / "large_oblique_input.nii.gz")
     labels, chunk_size, chunked = infer_volume(
         volume.data,
@@ -102,9 +103,9 @@ def test_large_whole_pipeline_matches_monai(
 
 
 def test_large_default_chunking_matches_monai(
-    mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path
+    mx: MlxRuntime, weights_dir: Path, reference_dir: Path
 ) -> None:
-    network = load_network(weights_dir, default_spec())
+    network = load_network(weights_dir / CONVERTED_NAME, default_spec())
     volume = read_nifti(reference_dir / "large_oblique_input.nii.gz")
     labels, chunk_size, chunked = infer_volume(
         volume.data,
@@ -121,9 +122,9 @@ def test_large_default_chunking_matches_monai(
 
 
 def test_large_chunk_size_two_matches_monai(
-    mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path
+    mx: MlxRuntime, weights_dir: Path, reference_dir: Path
 ) -> None:
-    network = load_network(weights_dir, default_spec())
+    network = load_network(weights_dir / CONVERTED_NAME, default_spec())
     volume = read_nifti(reference_dir / "large_oblique_input.nii.gz")
     labels, chunk_size, chunked = infer_volume(
         volume.data,
@@ -140,14 +141,14 @@ def test_large_chunk_size_two_matches_monai(
     assert np.count_nonzero(labels) > 0
 
 
-def test_auto_chunking_is_eight_slices(mx: MuscleMapRuntime, weights_dir: Path) -> None:
+def test_auto_chunking_is_eight_slices(mx: MlxRuntime, weights_dir: Path) -> None:
     data = np.zeros((64, 64, 10), dtype=np.float32)
     ys, xs = np.mgrid[0:64, 0:64]
     data[20:44, 20:44, :] = (
         10.0 + 0.2 * ys[20:44, 20:44, None] + 0.1 * xs[20:44, 20:44, None]
     ).astype(np.float32)
     data[28:36, 28:36, :] = -5.0
-    network = load_network(weights_dir, default_spec())
+    network = load_network(weights_dir / CONVERTED_NAME, default_spec())
     labels, chunk_size, chunked = infer_volume(
         data,
         np.eye(4, dtype=np.float64),
@@ -163,9 +164,9 @@ def test_auto_chunking_is_eight_slices(mx: MuscleMapRuntime, weights_dir: Path) 
 
 
 def test_chunked_pipeline_labels_match_monai(
-    mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path
+    mx: MlxRuntime, weights_dir: Path, reference_dir: Path
 ) -> None:
-    network = load_network(weights_dir, default_spec())
+    network = load_network(weights_dir / CONVERTED_NAME, default_spec())
     volume = read_nifti(reference_dir / "small_input.nii.gz")
     labels, chunk_size, chunked = infer_volume(
         volume.data, volume.affine, default_spec(), network, chunk_size=2, overlap_percent=90
@@ -177,9 +178,9 @@ def test_chunked_pipeline_labels_match_monai(
 
 
 def test_window_pipeline_labels_match_monai(
-    mx: MuscleMapRuntime, weights_dir: Path, reference_dir: Path
+    mx: MlxRuntime, weights_dir: Path, reference_dir: Path
 ) -> None:
-    network = load_network(weights_dir, default_spec())
+    network = load_network(weights_dir / CONVERTED_NAME, default_spec())
     volume = read_nifti(reference_dir / "window_input.nii.gz")
     labels, chunk_size, chunked = infer_volume(
         volume.data, volume.affine, default_spec(), network, chunk_size=None, overlap_percent=90

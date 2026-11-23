@@ -65,8 +65,8 @@ curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24
 | `overlap_percent` | Gaussian slice-window overlap, 0–99; default 90, as upstream |
 | `overwrite` | `False` by default; an existing mask is replaced only when `True` |
 
-- **Units:** spatial units must be millimeters or unspecified (read as millimeters, as
-  upstream). 4D images are rejected.
+- **Units:** millimeters or unspecified (read as millimeters, as upstream); meter and
+  micron headers are converted to millimeters. 4D images are rejected.
 - **Mask:** int16 with background 0 and the original 113 anatomical IDs (not channel
   indices), on the input grid with its affine, qform, sform and units. The largest
   6-connected component of each label is kept.
@@ -96,11 +96,12 @@ except the sacrum (6160).
 ### Command line
 
 ```bash
-musclemap-mlx segment --input mri.nii.gz --output-dir out
+musclemap-mlx segment --image-path mri.nii.gz --output-dir out
 ```
 
-`segment` takes the runner options as flags (`--model-dir` for `weights_path`,
-`--chunk-size`, `--overlap`, `--overwrite`) and prints the result as JSON.
+`segment` takes the arguments above as flags (`--image-path`, `--output-dir`,
+`--weights-path`, `--chunk-size`, `--overlap-percent`, `--overwrite` or `--no-overwrite`)
+and prints the result as JSON.
 `musclemap-mlx download --model-dir musclemap-weights` exports a local copy of the weights.
 
 ### Limits

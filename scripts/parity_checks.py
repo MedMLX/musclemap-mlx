@@ -39,9 +39,10 @@ def weights_dir() -> Path:
 def _network():
     global _NETWORK
     if _NETWORK is None:
+        from musclemap_mlx.config import CONVERTED_NAME
         from musclemap_mlx.weights import load_network
 
-        _NETWORK = load_network(weights_dir(), default_spec())
+        _NETWORK = load_network(weights_dir() / CONVERTED_NAME, default_spec())
     return _NETWORK
 
 

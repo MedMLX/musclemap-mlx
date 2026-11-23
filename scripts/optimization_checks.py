@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from medmlx_core.sliding_window import sliding_window_inference
 
-from musclemap_mlx.config import default_spec
+from musclemap_mlx.config import CONVERTED_NAME, default_spec
 from musclemap_mlx.geometry import discretize, invert_logits, keep_largest_components, preprocess
 from musclemap_mlx.pipeline import infer_volume
 from musclemap_mlx.weights import load_network
@@ -31,7 +31,7 @@ def _weights() -> Path:
 def network() -> object:
     global _NETWORK
     if _NETWORK is None:
-        _NETWORK = load_network(_weights(), default_spec())
+        _NETWORK = load_network(_weights() / CONVERTED_NAME, default_spec())
     return _NETWORK
 
 

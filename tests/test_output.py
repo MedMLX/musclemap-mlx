@@ -1,13 +1,17 @@
-"""NIfTI output geometry and atomic publication contracts."""
+"""NIfTI output geometry contracts."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+from medmlx_core.volumes import read_volume
 
-from musclemap_mlx.geometry import nib as nifti_io
-from musclemap_mlx.geometry import publish_mask
+from musclemap_mlx.geometry import read_nifti, write_mask
+
+if TYPE_CHECKING:
+    from conftest import SaveNifti
 
 AFFINE = np.array(
     [
@@ -20,38 +24,46 @@ AFFINE = np.array(
 )
 
 
-def test_publish_mask_keeps_affine_forms_and_dtype(tmp_path: Path) -> None:
-    source = nifti_io.Nifti1Image(np.zeros((6, 7, 2), dtype=np.float32), AFFINE)
-    source.set_qform(AFFINE, 2)
-    source.set_sform(AFFINE, 1)
-    source.header.set_xyzt_units("mm", "sec")
+def test_write_mask_keeps_affine_forms_and_dtype(tmp_path: Path, save_nifti: SaveNifti) -> None:
+    image = save_nifti(
+        tmp_path / "image.nii.gz",
+        np.zeros((6, 7, 2), dtype=np.float32),
+        sform=AFFINE,
+        sform_code=1,
+        qform=AFFINE,
+        qform_code=2,
+        units=("mm", "sec"),
+    )
     labels = np.zeros((6, 7, 2), dtype=np.int16)
     labels[2:4, 3:5, :] = 1101
     target = tmp_path / "mask.nii.gz"
-    publish_mask(target, labels, AFFINE, source.header)
-    written = nifti_io.load(str(target))
-    assert np.array_equal(np.asarray(written.dataobj), labels)
-    assert int(np.asarray(written.header.get("datatype"))) == 4
-    assert written.header.get_xyzt_units() == ("mm", "sec")
+    write_mask(target, labels, read_nifti(image).source)
+    written = read_volume(target, dtype=None)
+    assert np.array_equal(written.data, labels)
+    assert int(written.header["datatype"]) == 4
+    # NIfTI xyzt_units: millimeter (2) plus second (8).
+    assert int(written.header["xyzt_units"]) == 10
     assert np.allclose(written.affine, AFFINE, rtol=0.0, atol=1e-6)
-    _, qcode = written.get_qform(coded=True)
-    _, scode = written.get_sform(coded=True)
-    assert (qcode, scode) == (2, 1)
-    assert np.allclose(np.asarray(written.header.get_zooms()[:3]), (0.9, 1.3, 2.5))
-    assert list(tmp_path.glob(".*.mask.nii.gz")) == []
+    assert (written.qform_code, written.sform_code) == (2, 1)
+    assert np.allclose(written.zooms, (0.9, 1.3, 2.5))
 
 
-def test_publish_mask_preserves_distinct_source_forms(tmp_path: Path) -> None:
-    source = nifti_io.Nifti1Image(np.zeros((6, 7, 2), dtype=np.float32), AFFINE)
+def test_write_mask_preserves_distinct_source_forms(
+    tmp_path: Path, save_nifti: SaveNifti
+) -> None:
     qform = AFFINE.copy()
     qform[0, 3] += 10
-    source.set_qform(qform, 2)
-    source.set_sform(AFFINE, 1)
+    image = save_nifti(
+        tmp_path / "image.nii.gz",
+        np.zeros((6, 7, 2), dtype=np.float32),
+        sform=AFFINE,
+        sform_code=1,
+        qform=qform,
+        qform_code=2,
+    )
     target = tmp_path / "mask.nii.gz"
-    publish_mask(target, np.full((6, 7, 2), 8222, dtype=np.int16), AFFINE, source.header)
-    written = nifti_io.load(str(target))
-    restored_qform, _ = written.get_qform(coded=True)
-    restored_sform, _ = written.get_sform(coded=True)
-    assert restored_qform is not None and restored_sform is not None
-    np.testing.assert_allclose(restored_qform, qform, atol=1e-6, rtol=0)
-    np.testing.assert_allclose(restored_sform, AFFINE, atol=1e-6, rtol=0)
+    labels = np.full((6, 7, 2), 8222, dtype=np.int16)
+    write_mask(target, labels, read_nifti(image).source)
+    written = read_volume(target, dtype=None)
+    np.testing.assert_allclose(written.qform, qform, atol=1e-6, rtol=0)
+    np.testing.assert_allclose(written.sform, AFFINE, atol=1e-6, rtol=0)
