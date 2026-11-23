@@ -8,16 +8,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 from medmlx_core.errors import AssetNotReadyError
+from medmlx_core.volumes import write_volume
 
 from musclemap_mlx.cli import main
-from musclemap_mlx.geometry import nib as nifti_io
 
 
 def _image(path: Path) -> None:
-    nifti_io.save(
-        nifti_io.Nifti1Image(np.ones((8, 9, 2), dtype=np.float32), np.eye(4)),
-        str(path),
-    )
+    write_volume(path, np.ones((8, 9, 2), dtype=np.float32), np.eye(4), dtype=np.float32)
 
 
 def test_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
@@ -58,7 +55,7 @@ def test_segment_missing_input_reports_one_line(
     code = main(
         [
             "segment",
-            "--input",
+            "--image-path",
             str(tmp_path / "missing.nii.gz"),
             "--output-dir",
             str(tmp_path / "out"),
@@ -77,14 +74,14 @@ def test_segment_without_weights_reports_asset_error(
     image = tmp_path / "image.nii.gz"
     _image(image)
 
-    def missing_weights(_model_id: str) -> Path:
+    def missing_weights(_model_id: str, _path: object, _name: str) -> Path:
         raise AssetNotReadyError("MuscleMap converted weights unavailable")
 
-    monkeypatch.setattr("musclemap_mlx.medmlx.weights_dir", missing_weights)
+    monkeypatch.setattr("musclemap_mlx.medmlx.weights_file", missing_weights)
     code = main(
         [
             "segment",
-            "--input",
+            "--image-path",
             str(image),
             "--output-dir",
             str(tmp_path / "out"),
@@ -109,14 +106,16 @@ def test_segment_result_is_json_when_stubbed(
     image = tmp_path / "image.nii.gz"
     _image(image)
 
-    def fake_run(**_kwargs: object) -> dict[str, object]:
+    def fake_run(*, image_path: Path, output_dir: Path) -> dict[str, object]:
+        """Stub."""
+        del image_path, output_dir
         return {"outputs": {"mask": "/tmp/mask.nii.gz"}, "details": {"requires_human_review": True}}
 
     monkeypatch.setattr("musclemap_mlx.medmlx.run", fake_run)
     code = main(
         [
             "segment",
-            "--input",
+            "--image-path",
             str(image),
             "--output-dir",
             str(tmp_path / "out"),

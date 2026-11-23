@@ -19,7 +19,7 @@ import numpy as np
 from medmlx_core.runtime import import_mlx
 from medmlx_core.sliding_window import sliding_window_inference
 
-from musclemap_mlx.config import load_model_config
+from musclemap_mlx.config import CONVERTED_NAME, load_model_config
 from musclemap_mlx.geometry import (
     discretize,
     invert_logits,
@@ -48,7 +48,7 @@ def main() -> int:
     metadata = json.loads((args.reference / "metadata.json").read_text())
     spec = load_model_config(args.weights / "config.json")
     mx = import_mlx()
-    network = load_network(args.weights, spec)
+    network = load_network(args.weights / CONVERTED_NAME, spec)
     expected = np.load(args.reference / "labels.npy", allow_pickle=False)
     full = np.zeros(expected.shape, dtype=np.int16)
     chunks: list[dict[str, object]] = []

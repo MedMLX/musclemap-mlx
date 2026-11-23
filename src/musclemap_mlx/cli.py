@@ -1,26 +1,28 @@
 """Command line for MuscleMap v1.4: optional weights download, then segmentation.
 
 Every subcommand prints one JSON object on stdout. Errors print one line on stderr
-and exit 1; usage errors exit 2. medmlx.org reads this parser with ``ast`` to
-check published commands, so each subcommand uses literal flags and choices.
+and exit 1; usage errors exit 2. The ``segment`` options are generated from the
+``run`` signature and its docstring.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import re
-import sys
 from collections.abc import Sequence
 from importlib import import_module
 from importlib.metadata import version
 from pathlib import Path
+
+from medmlx_core.cli import add_options, call, execute
 
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one subcommand and return its exit status."""
+    from musclemap_mlx.medmlx import run
+
     parser = argparse.ArgumentParser(
         prog="musclemap-mlx",
         description="MuscleMap v1.4 whole-body segmentation with native MLX",
@@ -42,45 +44,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     segment = commands.add_parser("segment", help="Segment one 3D NIfTI volume")
-    segment.add_argument("--input", required=True, type=Path, help="3D NIfTI image")
-    segment.add_argument(
-        "--model-dir", type=Path, help="Folder containing model.safetensors"
-    )
-    segment.add_argument("--output-dir", required=True, type=Path)
-    segment.add_argument(
-        "--chunk-size",
-        type=int,
-        default=None,
-        help="Positive axial slices per independent pass; default 8",
-    )
-    segment.add_argument(
-        "--overlap",
-        type=int,
-        default=90,
-        help="Gaussian slice-window overlap percentage in [0, 99] (default: %(default)s)",
-    )
-    segment.add_argument("--overwrite", action="store_true")
+    add_options(segment, run)
 
     args = parser.parse_args(argv)
-    try:
-        if args.command == "download":
-            result = _download(args.repo, args.revision, args.model_dir)
-        else:
-            from musclemap_mlx.medmlx import run
-
-            result = run(
-                image_path=args.input,
-                weights_path=args.model_dir,
-                output_dir=args.output_dir,
-                chunk_size=args.chunk_size,
-                overlap_percent=args.overlap,
-                overwrite=args.overwrite,
-            )
-    except (OSError, ValueError, RuntimeError, ImportError) as error:
-        print(f"{parser.prog}: {type(error).__name__}: {error}", file=sys.stderr)
-        return 1
-    print(json.dumps(result, indent=2))
-    return 0
+    if args.command == "download":
+        return execute(parser.prog, lambda: _download(args.repo, args.revision, args.model_dir))
+    return execute(parser.prog, lambda: call(run, args))
 
 
 def _commit(value: str) -> str:

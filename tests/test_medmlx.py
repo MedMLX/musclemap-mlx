@@ -8,16 +8,13 @@ from typing import cast
 import numpy as np
 import pytest
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError
+from medmlx_core.volumes import write_volume
 
 from musclemap_mlx import medmlx
-from musclemap_mlx.geometry import nib as nifti_io
 
 
 def _image(path: Path) -> None:
-    nifti_io.save(
-        nifti_io.Nifti1Image(np.ones((8, 9, 2), dtype=np.float32), np.eye(4)),
-        str(path),
-    )
+    write_volume(path, np.ones((8, 9, 2), dtype=np.float32), np.eye(4), dtype=np.float32)
 
 
 def test_declaration_preserves_labels_and_setup_boundary() -> None:
@@ -65,10 +62,10 @@ def test_missing_weights_is_an_asset_error(tmp_path: Path, monkeypatch: pytest.M
         raise AssertionError("MLX was imported before weights were resolved")
 
     monkeypatch.setattr(medmlx, "import_mlx", fail_mlx)
-    def missing_weights(_model_id: str) -> Path:
+    def missing_weights(_model_id: str, _path: object, _name: str) -> Path:
         raise AssetNotReadyError("MuscleMap converted weights unavailable")
 
-    monkeypatch.setattr(medmlx, "weights_dir", missing_weights)
+    monkeypatch.setattr(medmlx, "weights_file", missing_weights)
     with pytest.raises(AssetNotReadyError, match="converted weights"):
         medmlx.run(image_path=image, output_dir=tmp_path / "out")
 
@@ -76,7 +73,7 @@ def test_missing_weights_is_an_asset_error(tmp_path: Path, monkeypatch: pytest.M
 def test_missing_converted_file_is_an_asset_error(tmp_path: Path) -> None:
     image = tmp_path / "image.nii.gz"
     _image(image)
-    with pytest.raises(AssetNotReadyError, match="weights not found"):
+    with pytest.raises(AssetNotReadyError, match="does not exist"):
         medmlx.run(
             image_path=image,
             weights_path=tmp_path / "weights",

@@ -6,31 +6,34 @@ The publisher's inference transforms are ``LoadImaged`` -> ``EnsureChannelFirstd
 ``SpatialPadd((256, 256, 1), method="end")``. ``Invertd`` reverses the spatial
 transforms on the logits with the same bilinear mode before ``argmax``.
 
-Only I/O and host geometry run here. The network is native MLX in ``network.py``.
-Resampling uses ``scipy.ndimage.affine_transform`` in float64 with border clamping,
-which matches MONAI's ``grid_sample(align_corners=False, padding_mode="border",
+Only host geometry runs here. The network is native MLX in ``network.py``. NIfTI
+reading and admission, header correction, orientation and the spacing grid come
+from ``medmlx_core``. The forward spacing resampler is a local port of MONAI
+1.3.2's ATen ``grid_sample`` arithmetic; the inverse uses
+``scipy.ndimage.affine_transform`` in float64 with border clamping, which matches
+MONAI's ``grid_sample(align_corners=False, padding_mode="border",
 mode="bilinear")`` pull mapping.
 """
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal, Protocol, cast, overload
+from typing import Protocol, cast
 
 import nibabel as nib_runtime
 import numpy as np
 import numpy.typing as npt
-from medmlx_core.geometry import (
-    _linspace_from_neg_one,
-    _mm,
-    affine_to_spacing,
-    compute_shape_offset,
-    zoom_affine,
+from medmlx_core.geometry import _linspace_from_neg_one, _mm
+from medmlx_core.transforms import (
+    axis_codes,
+    correct_nifti_header,
+    orient,
+    spacing_grid,
 )
+from medmlx_core.volumes import NiftiHeader, Volume, read_volume
 from scipy import ndimage
 
 from musclemap_mlx.config import (
@@ -42,85 +45,28 @@ from musclemap_mlx.config import (
 type Float32Array = npt.NDArray[np.float32]
 type Float64Array = npt.NDArray[np.float64]
 type Int16Array = npt.NDArray[np.int16]
-type Int64Array = npt.NDArray[np.int64]
 type Shape3 = tuple[int, int, int]
 
 
-class NiftiHeader(Protocol):
-    """The header operations used by the reader and writer."""
+class _NiftiImage(Protocol):
+    def set_qform(self, affine: Float64Array, code: int) -> None: ...
 
-    def get(self, key: str) -> object: ...
-
-    def get_zooms(self) -> tuple[float, ...]: ...
-
-    def set_zooms(self, zooms: tuple[float, ...]) -> None: ...
-
-    def get_xyzt_units(self) -> tuple[str, str]: ...
-
-    def set_xyzt_units(self, xyz: str, t: str) -> None: ...
-
-    def set_data_dtype(self, datatype: object) -> None: ...
-
-    def copy(self) -> NiftiHeader: ...
-
-    def get_qform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
-
-    def get_sform(self, coded: bool = False) -> tuple[Float64Array | None, int]: ...
+    def set_sform(self, affine: Float64Array, code: int) -> None: ...
 
 
-class NiftiImage(Protocol):
-    """The NIfTI image surface used by the pipeline."""
-
-    affine: Float64Array
-    dataobj: object
-    header: NiftiHeader
-
-    @overload
-    def get_sform(self) -> Float64Array: ...
-
-    @overload
-    def get_sform(self, coded: Literal[True]) -> tuple[Float64Array | None, int]: ...
-
-    @overload
-    def get_qform(self) -> Float64Array: ...
-
-    @overload
-    def get_qform(self, coded: Literal[True]) -> tuple[Float64Array | None, int]: ...
-
-    def set_sform(self, affine: Float64Array, code: int = 0) -> None: ...
-
-    def set_qform(self, affine: Float64Array, code: int = 0) -> None: ...
-
-
-class Orientations(Protocol):
-    def aff2axcodes(self, affine: Float64Array) -> tuple[str, ...]: ...
-
-    def axcodes2ornt(self, axcodes: str) -> Float64Array: ...
-
-    def ornt_transform(self, start: Float64Array, end: Float64Array) -> Float64Array: ...
-
-    def inv_ornt_aff(self, ornt: Int64Array, shape: Shape3) -> Float64Array: ...
-
-    def io_orientation(self, affine: Float64Array) -> Float64Array: ...
-
-
-class NiftiIo(Protocol):
-    orientations: Orientations
-
-    def load(self, filename: str) -> NiftiImage: ...
-
-    def save(self, image: NiftiImage, filename: str) -> None: ...
+class _Nibabel(Protocol):
+    """The nibabel writer calls whose header handling ``write_like`` does not share."""
 
     def Nifti1Image(
-        self, data: npt.ArrayLike, affine: Float64Array, header: NiftiHeader | None = None
-    ) -> NiftiImage: ...
+        self, dataobj: npt.ArrayLike, affine: Float64Array, header: NiftiHeader
+    ) -> _NiftiImage: ...
+
+    def save(self, img: _NiftiImage, filename: str) -> None: ...
 
 
-nib = cast(NiftiIo, nib_runtime)
+nib = cast(_Nibabel, nib_runtime)
 
 SPATIAL_AXCODES = "RAS"
-AFFINE_TOL = 1e-3
-_ACCEPTED_UNITS = {"mm", "unknown"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,18 +82,23 @@ class VolumeGeometry:
     crop_start: Shape3
     crop_shape: Shape3
     padded_shape: Shape3
-    orientation_to_ras: Int64Array
 
 
 @dataclass(frozen=True, slots=True)
 class ReadVolume:
-    """A reader grid for preprocessing and the original grid for output."""
+    """An admitted source volume and the MONAI-corrected affine preprocessing uses.
 
-    image: NiftiImage
-    data: Float32Array
+    ``source`` keeps the file's header for the chunk round trip and the output
+    mask; ``affine`` is the reader affine after MONAI's header correction.
+    """
+
+    source: Volume[np.float32]
     affine: Float64Array
-    output_affine: Float64Array
-    output_header: NiftiHeader
+
+    @property
+    def data(self) -> Float32Array:
+        """Float32 voxels in file axis order with slope and intercept applied."""
+        return self.source.data
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,44 +110,30 @@ class PreparedVolume:
 
 
 def read_nifti(path: Path) -> ReadVolume:
-    """Read a 3D NIfTI as float32 on its reader grid.
+    """Read a 3D NIfTI as float32 and apply MONAI 1.3.2's reader header correction.
 
-    The header correction and affine selection follow MONAI's nibabel reader: when
-    the header zooms disagree with the affine, the compatible sform/qform is kept
-    or the zooms are reset to the affine spacing.
+    ``read_volume`` admits the file and converts meter or micron headers to
+    millimeters; the correction then runs on those millimeter forms. When the
+    header zooms disagree with the affine, the compatible sform/qform is kept or
+    the zooms are reset to the affine spacing, as MONAI's nibabel reader does.
 
     Raises:
-        ValueError: The file is not a 3D NIfTI, uses non-mm spatial units, contains
-            non-finite data, or has a non-finite or singular affine.
+        InvalidInputError: ``read_volume`` refuses the file, or its sform cannot be
+            stored as a qform quaternion.
     """
-    loaded = nib.load(str(path))
-    if not hasattr(loaded, "header") or not hasattr(loaded, "get_sform"):
-        raise ValueError(f"MuscleMap requires a NIfTI image, got {type(loaded).__name__}")
-    image = loaded
-    units = image.header.get_xyzt_units()[0]
-    if units not in _ACCEPTED_UNITS:
-        raise ValueError(f"MuscleMap expects millimetre spatial units, got {units!r}")
-    output_affine = np.array(image.affine, dtype=np.float64, copy=True)
-    output_header = image.header.copy()
-    data = np.asanyarray(image.dataobj)
-    if data.ndim != 3:
-        raise ValueError(f"MuscleMap expects a 3D volume, got shape {data.shape}")
-    array = np.asarray(data, dtype=np.float32)
-    if not np.isfinite(array).all():
-        raise ValueError("MuscleMap input contains non-finite voxels")
-    _correct_nifti_header(image)
-    affine = np.array(image.affine, dtype=np.float64, copy=True)
-    if not np.isfinite(affine).all():
-        raise ValueError("MuscleMap input affine is not finite")
-    if abs(float(np.linalg.det(affine[:3, :3]))) < 1e-8:
-        raise ValueError("MuscleMap input affine is singular")
-    return ReadVolume(
-        image=image,
-        data=np.ascontiguousarray(array),
-        affine=affine,
-        output_affine=output_affine,
-        output_header=output_header,
+    source = read_volume(path)
+    # NIfTI-2 headers (540 bytes) store forms in float64, NIfTI-1 in float32.
+    header_float = np.float64 if int(source.header["sizeof_hdr"]) == 540 else np.float32
+    affine, _ = correct_nifti_header(
+        source.affine,
+        source.zooms,
+        source.sform,
+        source.sform_code,
+        source.qform,
+        source.qform_code,
+        header_float=header_float,
     )
+    return ReadVolume(source=source, affine=affine)
 
 
 def preprocess(data: Float32Array, affine: Float64Array, spec: ModelSpec) -> PreparedVolume:
@@ -206,14 +143,10 @@ def preprocess(data: Float32Array, affine: Float64Array, spec: ModelSpec) -> Pre
     channel_first = np.ascontiguousarray(data[None], dtype=np.float32)
     original_shape = _shape3(channel_first.shape[1:])
 
-    orientation = _orientation_transform(affine, SPATIAL_AXCODES)
-    oriented = _apply_orientation(channel_first, orientation)
+    oriented, oriented_affine = orient(channel_first, affine, SPATIAL_AXCODES)
     oriented_shape = _shape3(oriented.shape[1:])
-    oriented_affine = affine @ nib.orientations.inv_ornt_aff(orientation, original_shape)
 
-    spaced_affine, spaced_shape = _spacing_geometry(
-        oriented_affine, oriented_shape, spec.pix_dim
-    )
+    spaced_affine, spaced_shape = spacing_grid(oriented_affine, oriented_shape, spec.pix_dim)
     spaced = _resample_monai(
         oriented, np.linalg.solve(oriented_affine, spaced_affine), spaced_shape
     )
@@ -246,7 +179,6 @@ def preprocess(data: Float32Array, affine: Float64Array, spec: ModelSpec) -> Pre
         crop_start=_shape3(crop_start),
         crop_shape=crop_shape,
         padded_shape=_shape3(padded.shape[1:]),
-        orientation_to_ras=orientation,
     )
     return PreparedVolume(data=np.ascontiguousarray(padded), geometry=geometry)
 
@@ -256,12 +188,15 @@ def read_chunk(volume: ReadVolume, start: int, end: int) -> ReadVolume:
 
     ``mm_util._write_temp_chunk`` writes float32 pixels with the original storage
     dtype. NiBabel consequently rescales integer images, including their zeros.
-    This round trip must precede nonzero normalization to match that contract.
+    This round trip must precede nonzero normalization to match that contract,
+    so it uses nibabel directly: ``write_like`` casts to the stored dtype without
+    rescaling and keeps NIfTI-2, where upstream writes NIfTI-1.
     """
+    header = volume.source.header
     with TemporaryDirectory(prefix="musclemap-chunk-") as temporary:
         path = Path(temporary) / "chunk.nii"
         image = nib.Nifti1Image(
-            volume.data[..., start:end], volume.output_affine, volume.output_header.copy()
+            volume.data[..., start:end], header.get_best_affine(), header.copy()
         )
         nib.save(image, str(path))
         return read_nifti(path)
@@ -293,10 +228,9 @@ def invert_logits(logits: Float32Array, geometry: VolumeGeometry) -> Float32Arra
     ] = cropped
     inverse_spacing = np.linalg.solve(geometry.spaced_affine, geometry.oriented_affine)
     oriented = _resample(spaced, inverse_spacing, geometry.oriented_shape)
-    inverse_orientation = _orientation_transform(
-        geometry.oriented_affine, "".join(nib.orientations.aff2axcodes(geometry.original_affine))
+    original, _ = orient(
+        oriented, geometry.oriented_affine, axis_codes(geometry.original_affine)
     )
-    original = _apply_orientation(oriented, inverse_orientation)
     if tuple(original.shape[1:]) != geometry.original_shape:
         raise RuntimeError("MuscleMap inverse geometry did not restore the reader grid")
     return np.ascontiguousarray(original)
@@ -340,77 +274,31 @@ def keep_largest_components(labels: Int16Array) -> Int16Array:
     return np.ascontiguousarray(result)
 
 
-def write_mask(
-    path: Path,
-    labels: Int16Array,
-    affine: Float64Array,
-    header: NiftiHeader,
-) -> None:
-    """Write int16 anatomical IDs with the input units and both spatial forms."""
-    output_header = header.copy()
+def write_mask(path: Path, labels: Int16Array, source: Volume[np.float32]) -> None:
+    """Write int16 anatomical IDs on the source grid with its header and units.
+
+    Both forms are stored again from the source header: a coded form keeps its
+    matrix and code, an uncoded one is written from the source affine with code 0.
+    ``write_like`` keeps the stored forms and pixdim untouched instead, which
+    changes the header for files with uncoded forms or pixdim that disagrees with
+    the sform.
+    """
+    header = source.header.copy()
     # NIfTI constructors retain the header dtype even when the array is int16.
-    output_header.set_data_dtype(np.int16)
-    image = nib.Nifti1Image(labels.astype(np.int16, copy=False), affine, output_header)
-    qform, qcode = header.get_qform(coded=True)
-    sform, scode = header.get_sform(coded=True)
-    image.set_qform(affine if qform is None else qform, int(qcode or 0))
-    image.set_sform(affine if sform is None else sform, int(scode or 0))
+    header.set_data_dtype(np.int16)
+    affine = source.header.get_best_affine()
+    image = nib.Nifti1Image(labels.astype(np.int16, copy=False), affine, header)
+    qform = source.header.get_qform() if source.qform_code else affine
+    sform = source.header.get_sform() if source.sform_code else affine
+    image.set_qform(qform, source.qform_code)
+    image.set_sform(sform, source.sform_code)
     nib.save(image, str(path))
-
-
-def publish_mask(
-    path: Path,
-    labels: Int16Array,
-    affine: Float64Array,
-    header: NiftiHeader,
-) -> None:
-    """Write atomically from a private staging directory beside the destination."""
-    # NiBabel follows links when opening a file, so stage in a private directory.
-    with TemporaryDirectory(prefix=".musclemap-", dir=path.parent) as staging:
-        temporary = Path(staging) / path.name
-        write_mask(temporary, labels, affine, header)
-        os.replace(temporary, path)
-
-
-def axis_codes(affine: Float64Array) -> str:
-    """Return the three-axis orientation code (for example ``RAS``)."""
-    return "".join(nib.orientations.aff2axcodes(affine))
 
 
 def _shape3(shape: tuple[int, ...]) -> Shape3:
     if len(shape) != 3:
         raise ValueError(f"Expected three spatial dimensions, got {shape}")
     return (int(shape[0]), int(shape[1]), int(shape[2]))
-
-
-def _orientation_transform(affine: Float64Array, axcodes: str) -> Int64Array:
-    source = nib.orientations.io_orientation(affine)
-    target = nib.orientations.axcodes2ornt(axcodes)
-    return np.asarray(nib.orientations.ornt_transform(source, target), dtype=np.int64)
-
-
-def _apply_orientation(data: Float32Array, orientation: Int64Array) -> Float32Array:
-    # MONAI flips on the source axes, then permutes with the channel axis fixed.
-    transform = np.array(orientation, dtype=np.int64, copy=True)
-    transform[:, 0] += 1
-    full = np.concatenate((np.asarray([[0, 1]], dtype=np.int64), transform))
-    axes = [axis for axis, flip in enumerate(full[:, 1]) if int(flip) == -1]
-    output = np.flip(data, axis=tuple(axes)) if axes else data
-    return np.ascontiguousarray(np.transpose(output, np.argsort(full[:, 0])))
-
-
-def _spacing_geometry(
-    affine: Float64Array, shape: Shape3, pix_dim: tuple[float, float, float]
-) -> tuple[Float64Array, Shape3]:
-    original_spacing = affine_to_spacing(affine, 3)
-    target = np.asarray(pix_dim, dtype=np.float64)
-    for index, original in enumerate(original_spacing):
-        if target[index] <= 0 or abs(float(original) - float(target[index])) <= AFFINE_TOL:
-            target[index] = original
-    new_affine = zoom_affine(affine, target)
-    output_shape, offset = compute_shape_offset(shape, affine, new_affine)
-    new_affine[:3, -1] = offset[:3]
-    return new_affine, _shape3(tuple(int(value) for value in output_shape))
 
 
 _FMA_SPLIT = 134217729.0
@@ -619,50 +507,3 @@ def _foreground_box(volume: Float32Array, margin: int) -> tuple[Shape3, Shape3]:
         starts.append(max(int(present[0]) - margin, 0))
         ends.append(min(int(present[-1]) + margin + 1, mask.shape[axis]))
     return _shape3(tuple(starts)), _shape3(tuple(ends))
-
-
-def _correct_nifti_header(image: NiftiImage) -> None:
-    dim = image.header.get("dim")
-    if isinstance(dim, np.ndarray):
-        values = cast(list[object], dim.tolist())
-    elif isinstance(dim, (list, tuple)):
-        values = list(cast(list[object] | tuple[object, ...], dim))
-    else:
-        return
-    if not values:
-        return
-    first = values[0]
-    if isinstance(first, bool) or not isinstance(first, (int, np.integer)):
-        return
-    dimension = cast(int, first)
-    if dimension >= 5:
-        return
-    pixdim = np.asarray(image.header.get_zooms())[:3]
-    if pixdim.size != 3:
-        return
-    norm_affine = affine_to_spacing(np.asarray(image.affine, dtype=np.float64), 3)
-    if np.allclose(pixdim, norm_affine):
-        return
-    # MONAI's ``rectify_header_sform_qform`` compares the stored matrices even when
-    # their codes are 0, so a qform_code 0 file (NiBabel's default) whose sform
-    # disagrees with pixdim still takes the stored qform. Each replacement keeps
-    # the replaced form's nonzero code, as NiBabel's ``code=None`` does there.
-    sform, qform = image.get_sform(), image.get_qform()
-    scode, qcode = image.get_sform(coded=True)[1], image.get_qform(coded=True)[1]
-    norm_sform = affine_to_spacing(np.asarray(sform, dtype=np.float64), 3)
-    norm_qform = affine_to_spacing(np.asarray(qform, dtype=np.float64), 3)
-    sform_mismatch = not np.allclose(norm_sform, pixdim)
-    qform_mismatch = not np.allclose(norm_qform, pixdim)
-    if int(scode or 0) != 0:
-        if not sform_mismatch:
-            return
-        if not qform_mismatch:
-            image.set_sform(qform, int(scode))
-            return
-    if int(qcode or 0) != 0:
-        if not qform_mismatch:
-            return
-        if not sform_mismatch:
-            image.set_qform(sform, int(qcode))
-            return
-    image.header.set_zooms(tuple(float(value) for value in norm_affine))

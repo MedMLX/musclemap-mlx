@@ -23,10 +23,12 @@ from medmlx_core.errors import (
 )
 from medmlx_core.outputs import artifact
 from medmlx_core.runtime import import_mlx
-from medmlx_core.weights import weights_dir, weights_revision
+from medmlx_core.typing import MlxRuntime
+from medmlx_core.weights import weights_file, weights_revision
 
 from musclemap_mlx.config import (
     CONFIG_NAME,
+    CONVERTED_NAME,
     MODEL_ID,
     ModelSpec,
     default_spec,
@@ -75,9 +77,9 @@ def run(
     output uses the original 113 anatomical IDs, not channel indices.
 
     Args:
-        image_path: 3D NIfTI (``.nii`` or ``.nii.gz``) in millimetres. MR or CT
-            contrast is accepted; the model is contrast-agnostic. Header slope and
-            intercept are applied on read.
+        image_path: 3D NIfTI (``.nii`` or ``.nii.gz``). Meter and micron headers
+            are converted to millimeters. MR or CT contrast is accepted; the model
+            is contrast-agnostic. Header slope and intercept are applied on read.
         weights_path: Local folder containing ``model.safetensors``, or omitted
             to download the pinned MedMLX bundle once and reuse its cache.
         output_dir: Destination folder for ``mask.nii.gz``. Created only after
@@ -107,10 +109,10 @@ def run(
         MissingDependencyError: MLX or its Metal device is unavailable.
     """
     import numpy as np
-    from nibabel.filebasedimages import ImageFileError
+    from medmlx_core.files import publish
+    from medmlx_core.transforms import axis_codes
 
-    from musclemap_mlx.geometry import axis_codes, publish_mask, read_nifti
-    from musclemap_mlx.weights import resolve_weights_file
+    from musclemap_mlx.geometry import read_nifti, write_mask
 
     started = time.perf_counter()
     source = _require_nifti(image_path)
@@ -137,13 +139,10 @@ def run(
         raise InvalidInputError("MuscleMap output must differ from the input image")
     if mask_path.resolve() == source.resolve():
         raise InvalidInputError("MuscleMap output must differ from the input image")
-    try:
-        volume = read_nifti(source)
-    except (OSError, ValueError, ImageFileError) as error:
-        raise InvalidInputError(f"Could not read MuscleMap input: {error}") from error
-    weights = resolve_weights_file(weights_dir(MODEL_ID) if weights_path is None else weights_path)
+    volume = read_nifti(source)
+    weights = weights_file(MODEL_ID, weights_path, CONVERTED_NAME)
     spec = _load_spec(weights)
-    mx = import_mlx()
+    mx = cast(MlxRuntime, import_mlx())
     mx.reset_peak_memory()
     from musclemap_mlx.pipeline import infer_volume
     from musclemap_mlx.weights import load_network
@@ -164,8 +163,7 @@ def run(
     if not set(np.unique(labels).tolist()) <= set(spec.class_labels):
         raise ModelExecutionError("MuscleMap produced labels outside the published ID table")
     try:
-        directory.mkdir(parents=True, exist_ok=True)
-        publish_mask(mask_path, labels, volume.output_affine, volume.output_header)
+        publish({mask_path: lambda staged: write_mask(staged, labels, volume.source)})
     except OSError as error:
         raise ModelExecutionError(f"Could not write MuscleMap mask: {error}") from error
     counts = {

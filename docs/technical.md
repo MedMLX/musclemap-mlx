@@ -42,7 +42,7 @@ Gaussian accumulation, argmax and connected components run on the host. An
 unavailable Metal device fails explicitly. Stored output is int16, with the
 original affine, distinct qform/sform matrices and codes, and unit metadata.
 Unknown spatial units are interpreted as mm while retaining the original unit
-field; explicitly different units are rejected.
+field; meter and micron headers are converted to mm; other units are rejected.
 
 ## Real inputs and acceptance criteria
 

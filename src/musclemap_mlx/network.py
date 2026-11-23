@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from types import TracebackType
-from typing import TYPE_CHECKING, Protocol, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from medmlx_core.errors import MissingDependencyError
 from medmlx_core.typing import MlxRuntime
@@ -18,52 +17,6 @@ from musclemap_mlx.config import (
 
 if TYPE_CHECKING:
     from mlx.core import array
-
-
-class _StreamContext(Protocol):
-    def __enter__(self) -> object: ...
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None: ...
-
-
-class MuscleMapRuntime(MlxRuntime, Protocol):
-    """The MLX operations this graph needs beyond the shared core protocol."""
-
-    def contiguous(self, a: array, /, *, stream: object = None) -> array: ...
-
-    def compile(self, fun: Callable[[array], array]) -> Callable[[array], array]: ...
-
-    def conv_transpose2d(
-        self,
-        input: array,
-        weight: array,
-        /,
-        stride: int | tuple[int, int] = 1,
-        padding: int | tuple[int, int] = 0,
-        dilation: int | tuple[int, int] = 1,
-        output_padding: int | tuple[int, int] = 0,
-        groups: int = 1,
-        *,
-        stream: object = None,
-    ) -> array: ...
-
-    def load(
-        self, file: str, /, format: str | None = None
-    ) -> dict[str, array] | array: ...
-
-    def save_safetensors(
-        self,
-        file: str,
-        arrays: dict[str, array],
-        metadata: dict[str, str] | None = None,
-    ) -> None: ...
-
-    def stream(self, s: object) -> _StreamContext: ...
 
 
 class MuscleMapUNet:
@@ -85,7 +38,7 @@ class MuscleMapUNet:
         spec: ModelSpec,
         inventory: ParameterInventory,
         *,
-        mx: MuscleMapRuntime,
+        mx: MlxRuntime,
     ) -> None:
         self.w = dict(weights)
         self.spec = spec
@@ -293,8 +246,3 @@ class MuscleMapUNet:
         # Host Gaussian blending traverses each channel spatially. Materialize
         # that layout on Metal instead of exporting a channel-last strided view.
         return self.mx.contiguous(self.mx.transpose(output, (0, 3, 1, 2)))
-
-
-def as_musclemap_runtime(mx: MlxRuntime) -> MuscleMapRuntime:
-    """Narrow the shared MLX runtime to the operations this graph uses."""
-    return cast(MuscleMapRuntime, mx)

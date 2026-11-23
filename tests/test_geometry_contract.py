@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+from medmlx_core.volumes import read_volume
 
 from musclemap_mlx.config import default_spec
 from musclemap_mlx.geometry import (
@@ -15,7 +17,9 @@ from musclemap_mlx.geometry import (
     preprocess,
     read_nifti,
 )
-from musclemap_mlx.geometry import nib as nifti_io
+
+if TYPE_CHECKING:
+    from conftest import SaveNifti
 
 
 def _phantom() -> tuple[np.ndarray, np.ndarray]:
@@ -37,18 +41,23 @@ def test_preprocess_pads_and_tracks_geometry() -> None:
     assert np.isfinite(prepared.data).all()
 
 
-def test_reader_rectifies_uncoded_qform_like_monai(tmp_path: Path) -> None:
+def test_reader_rectifies_uncoded_qform_like_monai(
+    tmp_path: Path, save_nifti: SaveNifti
+) -> None:
     """MONAI 1.3.2 replaces an sform that disagrees with pixdim by the stored qform,
     even with qform_code 0 (NiBabel's default), which changes the resampled grid."""
     data, affine = _phantom()
     affine[:3, :3] = np.diag((3.0, 3.0, 3.0))
-    image = nifti_io.Nifti1Image(data, affine)
-    image.set_qform(affine, 0)
-    image.set_sform(affine, 2)
-    image.header.set_zooms((2.5, 2.5, 3.0))
-    path = tmp_path / "edited_pixdim.nii"
-    nifti_io.save(image, str(path))
-    assert np.array_equal(read_nifti(path).affine, nifti_io.load(str(path)).get_qform())
+    path = save_nifti(
+        tmp_path / "edited_pixdim.nii",
+        data,
+        sform=affine,
+        sform_code=2,
+        qform=affine,
+        qform_code=0,
+        zooms=(2.5, 2.5, 3.0),
+    )
+    assert np.array_equal(read_nifti(path).affine, read_volume(path).qform)
 
 
 def test_empty_foreground_is_rejected() -> None:
