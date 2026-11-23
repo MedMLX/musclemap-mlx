@@ -65,7 +65,7 @@ curl -L https://raw.githubusercontent.com/wasserth/TotalSegmentator/d89e47f73d24
 | `overlap_percent` | Gaussian slice-window overlap, 0–99; default 90, as upstream |
 | `overwrite` | `False` by default; an existing mask is replaced only when `True` |
 
-- **Units:** spatial units must be millimetres or unspecified (read as millimetres, as
+- **Units:** spatial units must be millimeters or unspecified (read as millimeters, as
   upstream). 4D images are rejected.
 - **Mask:** int16 with background 0 and the original 113 anatomical IDs (not channel
   indices), on the input grid with its affine, qform, sform and units. The largest
@@ -105,10 +105,9 @@ musclemap-mlx segment --input mri.nii.gz --output-dir out
 
 ### Limits
 
-- Parity with the pinned MuscleMap v1.4 reference was established on real CT and MRI
-  examples; see [technical notes](https://huggingface.co/MedMLX/musclemap-mlx/blob/a80858be29d9d24a00ff53547303d1e6459d68e1/technical.md).
-  Accuracy against manual segmentations was not measured here.
-- Inference requires Apple Silicon with Metal.
+Accuracy against manual segmentations was not measured. The
+[technical notes](https://huggingface.co/MedMLX/musclemap-mlx/blob/a80858be29d9d24a00ff53547303d1e6459d68e1/technical.md)
+compare this port with the pinned MuscleMap v1.4 reference on CT and MRI.
 
 ## Use with MedMLX
 
