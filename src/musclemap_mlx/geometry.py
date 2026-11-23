@@ -31,7 +31,7 @@ from medmlx_core.geometry import (
     compute_shape_offset,
     zoom_affine,
 )
-from scipy import ndimage as scipy_ndimage
+from scipy import ndimage
 
 from musclemap_mlx.config import (
     CROP_MARGIN,
@@ -116,30 +116,7 @@ class NiftiIo(Protocol):
     ) -> NiftiImage: ...
 
 
-class Ndimage(Protocol):
-    def affine_transform(
-        self,
-        input: Float32Array,
-        matrix: Float64Array,
-        offset: Float64Array,
-        output_shape: Shape3,
-        output: Float32Array,
-        order: int,
-        mode: str,
-        prefilter: bool,
-    ) -> Float32Array: ...
-
-    def label(
-        self, input: npt.NDArray[np.bool_], structure: npt.NDArray[np.bool_]
-    ) -> tuple[Int64Array, int]: ...
-
-    def generate_binary_structure(self, rank: int, connectivity: int) -> npt.NDArray[np.bool_]: ...
-
-    def find_objects(self, input: npt.NDArray[np.uint16]) -> list[tuple[slice, ...] | None]: ...
-
-
 nib = cast(NiftiIo, nib_runtime)
-ndimage = cast(Ndimage, scipy_ndimage)
 
 SPATIAL_AXCODES = "RAS"
 AFFINE_TOL = 1e-3
@@ -352,7 +329,7 @@ def keep_largest_components(labels: Int16Array) -> Int16Array:
         if label == 0:
             continue
         # find_objects returns None only for absent IDs; ``values`` are present.
-        region = result[cast(tuple[slice, slice, slice], boxes[index - 1])]
+        region = result[boxes[index - 1]]
         mask = region == label
         components, count = ndimage.label(mask, structure=structure)
         if int(count) <= 1:
