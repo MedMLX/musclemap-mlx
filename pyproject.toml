@@ -47,11 +47,14 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://huggingface.co/MedMLX/musclemap-mlx/blob/a80858be29d9d24a00ff53547303d1e6459d68e1/technical.md"
 Homepage = "https://medmlx.org"
+Documentation = "https://github.com/MedMLX/musclemap-mlx/blob/v0.3.0/README.md"
+Repository = "https://github.com/MedMLX/musclemap-mlx"
+Issues = "https://github.com/MedMLX/musclemap-mlx/issues"
 Weights = "https://huggingface.co/MedMLX/musclemap-mlx"
 Upstream = "https://github.com/MuscleMap/MuscleMap"
 MedMLX = "https://github.com/MedMLX/medmlx"
+
 [project.scripts]
 "musclemap-mlx" = "musclemap_mlx.cli:main"
 
