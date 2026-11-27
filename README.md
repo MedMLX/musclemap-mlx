@@ -6,7 +6,7 @@ Segment 113 whole-body muscle and bone structures in MRI or CT with MuscleMap v1
 
 [![PyPI](https://img.shields.io/pypi/v/musclemap-mlx)](https://pypi.org/project/musclemap-mlx/)
 [![Python](https://img.shields.io/pypi/pyversions/musclemap-mlx)](https://pypi.org/project/musclemap-mlx/)
-[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/MedMLX/musclemap-mlx/blob/v0.3.0/LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/MedMLX/musclemap-mlx/blob/v0.3.1/LICENSE)
 [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-MLX-black?logo=apple)](https://github.com/ml-explore/mlx)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-weights-yellow)](https://huggingface.co/MedMLX/musclemap-mlx)
 [![MedMLX](https://img.shields.io/badge/MedMLX-runtime-A51C30)](https://github.com/MedMLX/medmlx)
@@ -32,7 +32,7 @@ Segment 113 whole-body muscle and bone structures in MRI or CT with MuscleMap v1
 ```bash
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install "musclemap-mlx>=0.3.0"
+uv pip install "musclemap-mlx>=0.3.1"
 ```
 
 ## Run
@@ -127,4 +127,4 @@ For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-wor
 
 ## License
 
-[MIT](https://github.com/MedMLX/musclemap-mlx/blob/v0.3.0/LICENSE). See [upstream license](https://github.com/MedMLX/musclemap-mlx/blob/v0.3.0/UPSTREAM_LICENSE) and [third-party notices](https://github.com/MedMLX/musclemap-mlx/blob/v0.3.0/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms ([Zenodo record 21929873](https://zenodo.org/records/21929873), MIT).
+[MIT](https://github.com/MedMLX/musclemap-mlx/blob/v0.3.1/LICENSE). See [upstream license](https://github.com/MedMLX/musclemap-mlx/blob/v0.3.1/UPSTREAM_LICENSE) and [third-party notices](https://github.com/MedMLX/musclemap-mlx/blob/v0.3.1/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms ([Zenodo record 21929873](https://zenodo.org/records/21929873), MIT).
